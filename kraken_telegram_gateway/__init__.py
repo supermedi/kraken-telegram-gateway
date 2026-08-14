@@ -1,0 +1,1 @@
+"""Kraken Telegram Gateway package."""

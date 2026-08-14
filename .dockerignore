@@ -1,0 +1,15 @@
+.env
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.git/
+.github/
+gateway.db
+*.sqlite
+*.sqlite3
+memory/
+MEMORY.md
+DEV_LOG.md
+BOOTSTRAP.md
