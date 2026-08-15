@@ -91,6 +91,25 @@ def test_confirm_marks_only_entry_order_as_dry_run_submitted():
     assert target_order.status == OrderStatus.PLANNED
 
 
+def test_status_includes_planned_order_visibility():
+    with make_session() as session:
+        preview_reply = dispatch_telegram_text(
+            "/trade pair=PF_XBTUSD side=buy amount_usdc=100 entry=limit:65000 "
+            "t1=67000:40% t2=69000:60%",
+            session,
+            Settings(max_amount_usdc=100),
+        )
+        trade_id = next(line.split(": ", 1)[1] for line in preview_reply.splitlines() if line.startswith("Trade ID:"))
+
+        status_reply = dispatch_telegram_text(f"/status {trade_id}", session, Settings(max_amount_usdc=100))
+
+    assert f"Trade ID: {trade_id}" in status_reply
+    assert "Ordres planifies:" in status_reply
+    assert "- entry: buy limit 65000 | 100 USDC | reduce-only=non | statut=planned" in status_reply
+    assert "- target_exit: sell limit 67000 | 40 USDC | target=40% | reduce-only=oui | statut=planned" in status_reply
+    assert "- target_exit: sell limit 69000 | 60 USDC | target=60% | reduce-only=oui | statut=planned" in status_reply
+
+
 def test_allowed_user_ids_are_enforced():
     update = {
         "message": {

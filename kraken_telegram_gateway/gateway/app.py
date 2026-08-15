@@ -6,11 +6,10 @@ from sqlmodel import Session
 
 from kraken_telegram_gateway.gateway.config import Settings, get_settings
 from kraken_telegram_gateway.gateway.db import get_session, init_db
-from kraken_telegram_gateway.gateway.models import Trade
 from kraken_telegram_gateway.gateway.parser import CommandParseError
 from kraken_telegram_gateway.gateway.risk import RiskValidationError
-from kraken_telegram_gateway.gateway.schemas import ConfirmResult, TradePreview
-from kraken_telegram_gateway.gateway.service import cancel_trade, confirm_trade, create_trade_preview
+from kraken_telegram_gateway.gateway.schemas import ConfirmResult, TradeDetail, TradePreview
+from kraken_telegram_gateway.gateway.service import cancel_trade, confirm_trade, create_trade_preview, get_trade_detail
 from kraken_telegram_gateway.gateway.telegram import (
     TelegramUpdateError,
     extract_chat_id,
@@ -63,12 +62,12 @@ def cancel_command(trade_id: str, session: Session = Depends(get_session)) -> Co
     return cancel_trade(trade_id, session)
 
 
-@app.get("/trades/{trade_id}", response_model=Trade)
-def get_trade(trade_id: str, session: Session = Depends(get_session)) -> Trade:
-    trade = session.get(Trade, trade_id)
-    if trade is None:
+@app.get("/trades/{trade_id}", response_model=TradeDetail)
+def get_trade(trade_id: str, session: Session = Depends(get_session)) -> TradeDetail:
+    detail = get_trade_detail(trade_id, session)
+    if detail is None:
         raise HTTPException(status_code=404, detail="Trade not found")
-    return trade
+    return detail
 
 
 @app.post("/telegram/webhook")

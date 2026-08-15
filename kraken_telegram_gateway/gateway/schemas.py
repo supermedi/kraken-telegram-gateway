@@ -1,5 +1,7 @@
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from kraken_telegram_gateway.gateway.models import Trade, TradeOrder
+
 
 class Target(BaseModel):
     price: float = Field(gt=0)
@@ -56,3 +58,8 @@ class ConfirmResult(BaseModel):
     trade_id: str
     status: str
     message: str
+
+
+class TradeDetail(BaseModel):
+    trade: Trade
+    orders: list[TradeOrder]

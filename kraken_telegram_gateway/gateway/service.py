@@ -16,7 +16,7 @@ from kraken_telegram_gateway.gateway.models import (
 )
 from kraken_telegram_gateway.gateway.parser import parse_trade_command
 from kraken_telegram_gateway.gateway.risk import validate_risk
-from kraken_telegram_gateway.gateway.schemas import ConfirmResult, TradePreview
+from kraken_telegram_gateway.gateway.schemas import ConfirmResult, TradeDetail, TradePreview
 
 
 def create_trade_preview(text: str, session: Session, settings: Settings) -> TradePreview:
@@ -78,6 +78,13 @@ def cancel_trade(trade_id: str, session: Session) -> ConfirmResult:
     return ConfirmResult(trade_id=trade.id, status=trade.status, message="Trade annule.")
 
 
+def get_trade_detail(trade_id: str, session: Session) -> TradeDetail | None:
+    trade = session.get(Trade, trade_id)
+    if trade is None:
+        return None
+    return TradeDetail(trade=trade, orders=list_trade_orders(trade.id, session))
+
+
 def format_trade_summary(trade: Trade) -> str:
     targets = ", ".join(
         f"{target['price']:g}:{target['percent']:g}%"
@@ -89,6 +96,34 @@ def format_trade_summary(trade: Trade) -> str:
         f"entry={trade.entry_type}:{trade.entry_price:g} | targets={targets} | "
         f"stop={stop} | leverage={trade.leverage}x"
     )
+
+
+def format_trade_status(trade: Trade, orders: list[TradeOrder]) -> str:
+    lines = [
+        f"Trade ID: {trade.id}",
+        f"Statut: {trade.status}",
+        format_trade_summary(trade),
+    ]
+    if orders:
+        lines.append("Ordres planifies:")
+        lines.extend(format_trade_order(order) for order in orders)
+    return "\n".join(lines)
+
+
+def format_trade_order(order: TradeOrder) -> str:
+    reduce_only = "oui" if order.reduce_only else "non"
+    target = f" | target={order.target_percent:g}%" if order.target_percent is not None else ""
+    external_id = f" | external_id={order.external_order_id}" if order.external_order_id else ""
+    return (
+        f"- {order.role}: {order.side} {order.order_type} {order.price:g} | "
+        f"{order.amount_usdc:g} USDC{target} | reduce-only={reduce_only} | "
+        f"statut={order.status}{external_id}"
+    )
+
+
+def list_trade_orders(trade_id: str, session: Session) -> list[TradeOrder]:
+    orders = session.exec(select(TradeOrder).where(TradeOrder.trade_id == trade_id)).all()
+    return sorted(orders, key=order_sort_key)
 
 
 def build_planned_orders(trade: Trade) -> list[TradeOrder]:
@@ -119,6 +154,12 @@ def build_planned_orders(trade: Trade) -> list[TradeOrder]:
             )
         )
     return orders
+
+
+def order_sort_key(order: TradeOrder) -> tuple[int, float, str]:
+    role_rank = 0 if order.role == OrderRole.ENTRY else 1
+    target_rank = order.target_percent if order.target_percent is not None else 0
+    return (role_rank, target_rank, order.id)
 
 
 def mark_entry_orders_submitted(trade_id: str, result: dict[str, str], session: Session) -> None:

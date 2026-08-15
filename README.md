@@ -63,6 +63,8 @@ Commandes Telegram supportees :
 /resume
 ```
 
+`/status <trade_id>` affiche le statut du trade et les ordres attaches : entree, targets reduce-only, prix, montant, statut et identifiant externe dry-run si disponible.
+
 ## Exemple
 
 ```bash

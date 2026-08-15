@@ -7,7 +7,7 @@ class RiskValidationError(ValueError):
 
 
 def validate_risk(intent: TradeIntent, settings: Settings) -> str | None:
-    if intent.pair not in settings.allowed_pair_set:
+    if not settings.allows_all_pairs and intent.pair not in settings.allowed_pair_set:
         raise RiskValidationError(f"pair {intent.pair} is not allowed")
     if intent.amount_usdc > settings.max_amount_usdc:
         raise RiskValidationError(

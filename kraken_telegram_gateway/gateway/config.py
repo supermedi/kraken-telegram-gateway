@@ -25,6 +25,10 @@ class Settings(BaseSettings):
         return {pair.strip().upper() for pair in self.allowed_pairs.split(",") if pair.strip()}
 
     @property
+    def allows_all_pairs(self) -> bool:
+        return self.allowed_pairs.strip() == "*"
+
+    @property
     def telegram_allowed_user_id_set(self) -> set[int]:
         return {
             int(user_id.strip())

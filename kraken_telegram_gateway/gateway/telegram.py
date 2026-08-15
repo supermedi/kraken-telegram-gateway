@@ -4,13 +4,15 @@ import httpx
 from sqlmodel import Session
 
 from kraken_telegram_gateway.gateway.config import Settings
-from kraken_telegram_gateway.gateway.models import ProcessedTelegramUpdate, Trade
+from kraken_telegram_gateway.gateway.models import ProcessedTelegramUpdate
 from kraken_telegram_gateway.gateway.parser import CommandParseError
 from kraken_telegram_gateway.gateway.risk import RiskValidationError
 from kraken_telegram_gateway.gateway.service import (
     cancel_trade,
     confirm_trade,
     create_trade_preview,
+    format_trade_status,
+    get_trade_detail,
     is_trading_paused,
     pause_trading,
     resume_trading,
@@ -92,10 +94,10 @@ def dispatch_telegram_text(text: str, session: Session, settings: Settings) -> s
             if not argument:
                 return "Trading: pause" if is_trading_paused(session) else "Trading: actif"
             trade_id = _require_trade_id(argument, "/status")
-            trade = session.get(Trade, trade_id)
-            if trade is None:
+            detail = get_trade_detail(trade_id, session)
+            if detail is None:
                 return "Trade introuvable."
-            return f"{trade.id}\n{trade.status}\n{trade.pair} {trade.side} {trade.amount_usdc:g} USDC"
+            return format_trade_status(detail.trade, detail.orders)
 
         if command == "/pause":
             return pause_trading(session)

@@ -44,3 +44,22 @@ def test_amount_cap_is_enforced():
 
     with pytest.raises(RiskValidationError, match="exceeds max"):
         validate_risk(intent, Settings(max_amount_usdc=100))
+
+
+def test_allowed_pairs_star_allows_any_pair():
+    intent = parse_trade_command(
+        "/trade pair=PF_SOLUSD side=buy amount_usdc=100 entry=limit:150 "
+        "t1=160:100%"
+    )
+
+    validate_risk(intent, Settings(allowed_pairs="*"))
+
+
+def test_missing_allowed_pairs_keeps_default_restrictive_list():
+    intent = parse_trade_command(
+        "/trade pair=PF_SOLUSD side=buy amount_usdc=100 entry=limit:150 "
+        "t1=160:100%"
+    )
+
+    with pytest.raises(RiskValidationError, match="PF_SOLUSD is not allowed"):
+        validate_risk(intent, Settings())
