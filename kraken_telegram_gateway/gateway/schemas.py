@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from kraken_telegram_gateway.gateway.models import Trade, TradeOrder
+from kraken_telegram_gateway.gateway.models import AuditEvent, Trade, TradeOrder
 
 
 class Target(BaseModel):
@@ -63,3 +63,17 @@ class ConfirmResult(BaseModel):
 class TradeDetail(BaseModel):
     trade: Trade
     orders: list[TradeOrder]
+
+
+class TradeList(BaseModel):
+    items: list[Trade]
+    total: int
+    limit: int
+    offset: int
+
+
+class AuditEventList(BaseModel):
+    items: list[AuditEvent]
+    total: int
+    limit: int
+    offset: int

@@ -8,6 +8,32 @@ La V1 est verrouillee en dry-run par defaut. Aucun ordre reel ne part vers Krake
 
 Le montant utilisateur reste exprime en USDC. Pour un ordre live Kraken Futures, le systeme doit convertir ce montant en `size` de contrat a partir de metadonnees d'instrument verifiees : valeur USDC par contrat, increment de taille et taille minimale. Si ces metadonnees ne sont pas disponibles, la confirmation est rejetee et aucun payload live n'est signe ni soumis.
 
+Par defaut, un trade sans stop loss reste autorise mais affiche un avertissement. Pour imposer une politique plus stricte, definir `REQUIRE_STOP_LOSS_FOR_CONFIRMATION=true` : la preview reste possible, mais `/confirm` rejette le trade sans toucher aux ordres planifies ni a Kraken.
+
+Un cache local optionnel peut etre fourni via `KRAKEN_INSTRUMENT_METADATA_PATH`. Format accepte :
+
+```json
+{
+  "instruments": {
+    "PF_XBTUSD": {
+      "contract_value_usdc": "5",
+      "size_step": "0.5",
+      "min_size": "1"
+    }
+  }
+}
+```
+
+Ces valeurs doivent etre verifiees avant usage. Meme avec ce fichier et la gate live ouverte, la V1 bloque encore la soumission reseau Kraken.
+
+Validation locale du cache avant de le monter sur le VPS :
+
+```bash
+kraken-metadata-validate ./instruments.json --require PF_XBTUSD --require PF_ETHUSD
+```
+
+La commande verifie que le JSON est lisible, que chaque instrument expose `contract_value_usdc`, `size_step` et `min_size`, que ces valeurs sont positives, et que les symboles requis sont presents. Elle ne contacte pas Kraken.
+
 ## Installation
 
 ```bash
@@ -61,13 +87,23 @@ Commandes Telegram supportees :
 ```text
 /trade pair=PF_XBTUSD side=buy amount_usdc=100 entry=limit:65000 t1=67000:40% t2=69000:40% t3=72000:20%
 /confirm <trade_id>
+/entry_filled <trade_id>
+/submit_targets <trade_id>
 /cancel <trade_id>
 /status [trade_id]
+/orders <trade_id> [status=planned role=target_exit]
+/trades [limit=5 status=pending_confirmation pair=PF_XBTUSD]
+/audit [trade_id] [event_type=trade_rejected limit=5]
 /pause
 /resume
 ```
 
 `/status <trade_id>` affiche le statut du trade et les ordres attaches : entree, targets reduce-only, prix, montant, statut et identifiant externe dry-run si disponible.
+`/entry_filled <trade_id>` marque l'ordre d'entree comme rempli et passe les targets reduce-only en `ready_to_submit` sans envoyer d'ordre Kraken. La commande est idempotente : la relancer sur un trade deja marque filled ne cree pas de nouvel evenement d'audit.
+`/submit_targets <trade_id>` marque les targets `ready_to_submit` comme soumises en dry-run, avec ids externes locaux, sans envoyer d'ordre Kraken. La commande est idempotente apres soumission : un retry indique les targets deja soumises, conserve les ids existants et ne cree pas de nouvel evenement d'audit.
+`/orders <trade_id>` affiche seulement la liste des ordres attaches pour relire rapidement l'entree et les targets, avec filtres optionnels `status` et `role`.
+`/trades` affiche les derniers trades depuis Telegram, avec filtres optionnels `limit`, `offset`, `status` et `pair`.
+`/audit` affiche les derniers evenements d'audit, filtrables par `trade_id` et `event_type`, pour diagnostiquer les confirmations rejetees et les garde-fous.
 
 ## Exemple
 
@@ -81,4 +117,21 @@ Puis confirmer en dry-run :
 
 ```bash
 curl -X POST http://localhost:8000/commands/confirm/<trade_id>
+curl -X POST http://localhost:8000/commands/entry-filled/<trade_id>
+curl -X POST http://localhost:8000/commands/submit-targets/<trade_id>
 ```
+
+Consulter les ordres attaches et filtrer une vue operateur :
+
+```bash
+curl "http://localhost:8000/trades?limit=20&offset=0"
+curl "http://localhost:8000/trades?status=pending_confirmation&pair=PF_XBTUSD"
+curl http://localhost:8000/trades/<trade_id>/orders
+curl "http://localhost:8000/trades/<trade_id>/orders?status=planned"
+curl "http://localhost:8000/trades/<trade_id>/orders?status=dry_run_submitted&role=target_exit"
+curl "http://localhost:8000/trades/<trade_id>/orders?role=target_exit&status=planned"
+curl "http://localhost:8000/audit?trade_id=<trade_id>&event_type=trade_rejected"
+```
+
+`GET /trades` retourne les trades les plus recents sous forme `{items,total,limit,offset}` avec filtres optionnels `status` et `pair`.
+`GET /audit` retourne les evenements d'audit les plus recents sous forme `{items,total,limit,offset}` avec filtres optionnels `trade_id` et `event_type`.

@@ -1,14 +1,16 @@
 import base64
 import hashlib
 import hmac
+import json
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_DOWN
+from pathlib import Path
 from urllib.parse import urlencode
 
 from kraken_telegram_gateway.gateway.config import Settings
-from kraken_telegram_gateway.gateway.models import Trade
+from kraken_telegram_gateway.gateway.models import Trade, TradeOrder
 
 
 class KrakenLiveTradingDisabledError(RuntimeError):
@@ -34,6 +36,31 @@ class InstrumentMetadata:
     contract_value_usdc: Decimal
     size_step: Decimal
     min_size: Decimal
+
+
+class LocalInstrumentMetadataProvider:
+    def __init__(self, path: str | None):
+        self.path = Path(path) if path else None
+        self._cache: object | None = None
+
+    def get(self, symbol: str) -> InstrumentMetadata | None:
+        if self.path is None:
+            return None
+        data = self._load()
+        raw = find_instrument_metadata_payload(data, symbol)
+        if raw is None:
+            return None
+        return parse_instrument_metadata(raw, symbol)
+
+    def _load(self) -> object:
+        if self._cache is None:
+            try:
+                self._cache = json.loads(self.path.read_text(encoding="utf-8"))
+            except OSError as exc:
+                raise KrakenOrderPayloadError(f"instrument metadata file cannot be read: {self.path}") from exc
+            except json.JSONDecodeError as exc:
+                raise KrakenOrderPayloadError(f"instrument metadata file is not valid JSON: {self.path}") from exc
+        return self._cache
 
 
 class KrakenFuturesSigner:
@@ -64,8 +91,15 @@ class KrakenFuturesSigner:
 class KrakenClient:
     SEND_ORDER_PATH = "/derivatives/api/v3/sendorder"
 
-    def __init__(self, settings: Settings):
+    def __init__(
+        self,
+        settings: Settings,
+        instrument_provider: LocalInstrumentMetadataProvider | None = None,
+    ):
         self.settings = settings
+        self.instrument_provider = instrument_provider or LocalInstrumentMetadataProvider(
+            settings.kraken_instrument_metadata_path
+        )
 
     def submit_entry_order(self, trade: Trade) -> dict[str, str]:
         if not self.settings.can_live_trade:
@@ -78,41 +112,113 @@ class KrakenClient:
         # The signer/request preparation exists for review and tests, but V1 still blocks
         # network submission until live trading is explicitly approved and implemented.
         try:
-            payload = self.build_entry_order_payload(trade)
+            payload = self.build_entry_order_payload(trade, self.instrument_provider.get(trade.pair))
         except KrakenOrderPayloadError as exc:
             return {
                 "mode": "blocked",
                 "message": f"Live Kraken submission blocked: {exc}",
             }
         self.build_private_request("POST", self.SEND_ORDER_PATH, payload)
-        raise NotImplementedError("Live Kraken Futures submission is intentionally gated for V1.")
+        return {
+            "mode": "blocked",
+            "message": "Live Kraken submission blocked: network submission is intentionally disabled for V1.",
+        }
+
+    def submit_target_order(self, trade: Trade, order: TradeOrder) -> dict[str, str]:
+        if not order.reduce_only:
+            return {
+                "mode": "blocked",
+                "message": "Target submission blocked: target exit order must be reduce-only.",
+            }
+        if not self.settings.can_live_trade:
+            return {
+                "mode": "dry_run",
+                "external_order_id": f"dryrun-target-{order.id}",
+                "message": "Dry-run: no Kraken target order was submitted.",
+            }
+
+        # As with entry orders, V1 prepares the boundary for review but never
+        # performs a Kraken network submission.
+        try:
+            payload = self.build_target_order_payload(trade, order, self.instrument_provider.get(order.pair))
+        except KrakenOrderPayloadError as exc:
+            return {
+                "mode": "blocked",
+                "message": f"Live Kraken target submission blocked: {exc}",
+            }
+        self.build_private_request("POST", self.SEND_ORDER_PATH, payload)
+        return {
+            "mode": "blocked",
+            "message": "Live Kraken target submission blocked: network submission is intentionally disabled for V1.",
+        }
 
     def build_entry_order_payload(
         self,
         trade: Trade,
         instrument: InstrumentMetadata | None = None,
     ) -> dict[str, str | bool]:
+        return self._build_limit_order_payload(
+            symbol=trade.pair,
+            side=trade.side,
+            price=trade.entry_price,
+            amount_usdc=trade.amount_usdc,
+            leverage=trade.leverage,
+            reduce_only=False,
+            instrument=instrument,
+        )
+
+    def build_target_order_payload(
+        self,
+        trade: Trade,
+        order: TradeOrder,
+        instrument: InstrumentMetadata | None = None,
+    ) -> dict[str, str | bool]:
+        if order.trade_id != trade.id:
+            raise KrakenOrderPayloadError("target order does not belong to trade")
+        if not order.reduce_only:
+            raise KrakenOrderPayloadError("target exit order must be reduce-only")
+        return self._build_limit_order_payload(
+            symbol=order.pair,
+            side=order.side,
+            price=order.price,
+            amount_usdc=order.amount_usdc,
+            leverage=trade.leverage,
+            reduce_only=True,
+            instrument=instrument,
+        )
+
+    def _build_limit_order_payload(
+        self,
+        *,
+        symbol: str,
+        side: str,
+        price: float,
+        amount_usdc: float,
+        leverage: int,
+        reduce_only: bool,
+        instrument: InstrumentMetadata | None,
+    ) -> dict[str, str | bool]:
         if instrument is None:
             raise KrakenOrderPayloadError(
                 "instrument metadata is required before converting amount_usdc to contract size"
             )
-        if instrument.symbol.upper() != trade.pair.upper():
+        if instrument.symbol.upper() != symbol.upper():
             raise KrakenOrderPayloadError(
-                f"instrument metadata mismatch: {instrument.symbol} cannot be used for {trade.pair}"
+                f"instrument metadata mismatch: {instrument.symbol} cannot be used for {symbol}"
             )
 
         size = calculate_contract_size(
-            amount_usdc=Decimal(str(trade.amount_usdc)),
-            leverage=Decimal(str(trade.leverage)),
+            amount_usdc=Decimal(str(amount_usdc)),
+            leverage=Decimal(str(leverage)),
             instrument=instrument,
         )
         return {
-            "symbol": trade.pair,
+            "symbol": symbol,
             "orderType": "lmt",
-            "side": trade.side,
+            "side": side,
             "size": format_decimal(size),
-            "limitPrice": format_decimal(Decimal(str(trade.entry_price))),
-            "reduceOnly": False,
+            "limitPrice": format_decimal(Decimal(str(price))),
+            "reduceOnly": reduce_only,
         }
 
     def build_private_request(
@@ -163,6 +269,35 @@ def calculate_contract_size(amount_usdc: Decimal, leverage: Decimal, instrument:
             f"calculated size {format_decimal(size)} is below minimum {format_decimal(instrument.min_size)}"
         )
     return size
+
+
+def find_instrument_metadata_payload(data: object, symbol: str) -> Mapping[str, object] | None:
+    wanted = symbol.upper()
+    if isinstance(data, Mapping):
+        instruments = data.get("instruments", data)
+        if isinstance(instruments, Mapping):
+            for key, value in instruments.items():
+                if str(key).upper() == wanted and isinstance(value, Mapping):
+                    return value
+        if isinstance(instruments, list):
+            for value in instruments:
+                if isinstance(value, Mapping) and str(value.get("symbol", "")).upper() == wanted:
+                    return value
+    return None
+
+
+def parse_instrument_metadata(raw: Mapping[str, object], symbol: str) -> InstrumentMetadata:
+    try:
+        return InstrumentMetadata(
+            symbol=str(raw.get("symbol") or symbol).upper(),
+            contract_value_usdc=Decimal(str(raw["contract_value_usdc"])),
+            size_step=Decimal(str(raw["size_step"])),
+            min_size=Decimal(str(raw["min_size"])),
+        )
+    except KeyError as exc:
+        raise KrakenOrderPayloadError(f"instrument metadata is missing required field: {exc.args[0]}") from exc
+    except Exception as exc:
+        raise KrakenOrderPayloadError("instrument metadata contains invalid decimal values") from exc
 
 
 def format_decimal(value: Decimal) -> str:

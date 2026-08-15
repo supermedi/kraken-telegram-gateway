@@ -9,6 +9,7 @@ class TradeStatus(StrEnum):
     PENDING_CONFIRMATION = "pending_confirmation"
     DRY_RUN_EXECUTED = "dry_run_executed"
     LIVE_SUBMITTED = "live_submitted"
+    ENTRY_FILLED = "entry_filled"
     CANCELLED = "cancelled"
     REJECTED = "rejected"
 
@@ -22,6 +23,8 @@ class OrderStatus(StrEnum):
     PLANNED = "planned"
     DRY_RUN_SUBMITTED = "dry_run_submitted"
     LIVE_SUBMITTED = "live_submitted"
+    FILLED = "filled"
+    READY_TO_SUBMIT = "ready_to_submit"
     CANCELLED = "cancelled"
 
 

@@ -1,5 +1,6 @@
 import json
 
+from sqlalchemy import func
 from sqlmodel import Session, select
 
 from kraken_telegram_gateway.gateway.config import Settings
@@ -16,7 +17,7 @@ from kraken_telegram_gateway.gateway.models import (
 )
 from kraken_telegram_gateway.gateway.parser import parse_trade_command
 from kraken_telegram_gateway.gateway.risk import validate_risk
-from kraken_telegram_gateway.gateway.schemas import ConfirmResult, TradeDetail, TradePreview
+from kraken_telegram_gateway.gateway.schemas import AuditEventList, ConfirmResult, TradeDetail, TradeList, TradePreview
 
 
 def create_trade_preview(text: str, session: Session, settings: Settings) -> TradePreview:
@@ -54,6 +55,14 @@ def confirm_trade(trade_id: str, session: Session, settings: Settings) -> Confir
         return ConfirmResult(trade_id=trade_id, status="not_found", message="Trade introuvable.")
     if trade.status != TradeStatus.PENDING_CONFIRMATION:
         return ConfirmResult(trade_id=trade.id, status=trade.status, message="Trade deja traite.")
+    if settings.require_stop_loss_for_confirmation and trade.stop_price is None:
+        message = "Confirmation refusee: stop loss requis par la configuration de securite."
+        trade.status = TradeStatus.REJECTED
+        trade.updated_at = utc_now()
+        session.add(trade)
+        session.add(AuditEvent(trade_id=trade.id, event_type="trade_rejected", message=message))
+        session.commit()
+        return ConfirmResult(trade_id=trade.id, status=trade.status, message=message)
 
     result = KrakenClient(settings).submit_entry_order(trade)
     if result["mode"] == "dry_run":
@@ -85,11 +94,203 @@ def cancel_trade(trade_id: str, session: Session) -> ConfirmResult:
     return ConfirmResult(trade_id=trade.id, status=trade.status, message="Trade annule.")
 
 
+def mark_entry_filled(trade_id: str, session: Session) -> ConfirmResult:
+    trade = session.get(Trade, trade_id)
+    if trade is None:
+        return ConfirmResult(trade_id=trade_id, status="not_found", message="Trade introuvable.")
+    if trade.status not in {
+        TradeStatus.DRY_RUN_EXECUTED,
+        TradeStatus.LIVE_SUBMITTED,
+        TradeStatus.ENTRY_FILLED,
+    }:
+        return ConfirmResult(
+            trade_id=trade.id,
+            status=trade.status,
+            message="Entry fill refuse: le trade doit d'abord etre confirme.",
+        )
+
+    entry_orders = session.exec(
+        select(TradeOrder).where(TradeOrder.trade_id == trade.id, TradeOrder.role == OrderRole.ENTRY)
+    ).all()
+    target_orders = session.exec(
+        select(TradeOrder).where(TradeOrder.trade_id == trade.id, TradeOrder.role == OrderRole.TARGET_EXIT)
+    ).all()
+
+    entry_needs_update = any(order.status != OrderStatus.FILLED for order in entry_orders)
+    planned_targets = [order for order in target_orders if order.status == OrderStatus.PLANNED]
+    if trade.status == TradeStatus.ENTRY_FILLED and not entry_needs_update and not planned_targets:
+        return ConfirmResult(
+            trade_id=trade.id,
+            status=trade.status,
+            message="Entry deja marquee filled. Aucun changement applique.",
+        )
+
+    for order in entry_orders:
+        if order.status != OrderStatus.FILLED:
+            order.status = OrderStatus.FILLED
+            order.updated_at = utc_now()
+            session.add(order)
+    for order in planned_targets:
+        order.status = OrderStatus.READY_TO_SUBMIT
+        order.updated_at = utc_now()
+        session.add(order)
+
+    trade.status = TradeStatus.ENTRY_FILLED
+    trade.updated_at = utc_now()
+    session.add(trade)
+    message = "Entry marquee filled. Targets reduce-only pretes a soumettre; aucun ordre Kraken envoye."
+    session.add(AuditEvent(trade_id=trade.id, event_type="entry_filled", message=message))
+    session.commit()
+    return ConfirmResult(trade_id=trade.id, status=trade.status, message=message)
+
+
+def submit_ready_targets(trade_id: str, session: Session, settings: Settings) -> ConfirmResult:
+    if is_trading_paused(session):
+        return ConfirmResult(trade_id=trade_id, status="paused", message="Trading en pause.")
+
+    trade = session.get(Trade, trade_id)
+    if trade is None:
+        return ConfirmResult(trade_id=trade_id, status="not_found", message="Trade introuvable.")
+    if trade.status != TradeStatus.ENTRY_FILLED:
+        return ConfirmResult(
+            trade_id=trade.id,
+            status=trade.status,
+            message="Soumission targets refusee: l'entree doit etre marquee filled.",
+        )
+
+    ready_targets = session.exec(
+        select(TradeOrder).where(
+            TradeOrder.trade_id == trade.id,
+            TradeOrder.role == OrderRole.TARGET_EXIT,
+            TradeOrder.status == OrderStatus.READY_TO_SUBMIT,
+        )
+    ).all()
+    if not ready_targets:
+        submitted_targets = session.exec(
+            select(TradeOrder).where(
+                TradeOrder.trade_id == trade.id,
+                TradeOrder.role == OrderRole.TARGET_EXIT,
+                TradeOrder.status.in_([OrderStatus.DRY_RUN_SUBMITTED, OrderStatus.LIVE_SUBMITTED]),
+            )
+        ).all()
+        if submitted_targets:
+            return ConfirmResult(
+                trade_id=trade.id,
+                status=trade.status,
+                message=(
+                    f"Targets deja soumises: {len(submitted_targets)} target(s) reduce-only deja enregistrees. "
+                    "Aucun changement applique."
+                ),
+            )
+        return ConfirmResult(
+            trade_id=trade.id,
+            status=trade.status,
+            message="Aucune target reduce-only prete a soumettre.",
+        )
+
+    client = KrakenClient(settings)
+    submitted_count = 0
+    blocked_messages = []
+    for order in sorted(ready_targets, key=order_sort_key):
+        result = client.submit_target_order(trade, order)
+        if result["mode"] == "blocked":
+            blocked_messages.append(result["message"])
+            continue
+        order.status = OrderStatus.DRY_RUN_SUBMITTED if result["mode"] == "dry_run" else OrderStatus.LIVE_SUBMITTED
+        order.external_order_id = result.get("external_order_id")
+        order.updated_at = utc_now()
+        session.add(order)
+        submitted_count += 1
+
+    if submitted_count:
+        message = f"Dry-run: {submitted_count} target(s) reduce-only marquees soumises; aucun ordre Kraken envoye."
+        session.add(AuditEvent(trade_id=trade.id, event_type="targets_submitted", message=message))
+    else:
+        message = blocked_messages[0] if blocked_messages else "Aucune target reduce-only soumise."
+        session.add(AuditEvent(trade_id=trade.id, event_type="targets_blocked", message=message))
+    trade.updated_at = utc_now()
+    session.add(trade)
+    session.commit()
+    return ConfirmResult(trade_id=trade.id, status=trade.status, message=message)
+
+
 def get_trade_detail(trade_id: str, session: Session) -> TradeDetail | None:
     trade = session.get(Trade, trade_id)
     if trade is None:
         return None
     return TradeDetail(trade=trade, orders=list_trade_orders(trade.id, session))
+
+
+def get_trade_orders(
+    trade_id: str,
+    session: Session,
+    *,
+    status: OrderStatus | None = None,
+    role: OrderRole | None = None,
+) -> list[TradeOrder] | None:
+    if session.get(Trade, trade_id) is None:
+        return None
+    return list_trade_orders(trade_id, session, status=status, role=role)
+
+
+def list_trades(
+    session: Session,
+    *,
+    status: TradeStatus | None = None,
+    pair: str | None = None,
+    limit: int = 20,
+    offset: int = 0,
+) -> TradeList:
+    filters = []
+    if status is not None:
+        filters.append(Trade.status == status)
+    if pair:
+        filters.append(Trade.pair == pair.upper())
+
+    count_statement = select(func.count()).select_from(Trade)
+    if filters:
+        count_statement = count_statement.where(*filters)
+    total = session.exec(count_statement).one()
+
+    trade_statement = (
+        select(Trade)
+        .where(*filters)
+        .order_by(Trade.created_at.desc(), Trade.id.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    trades = session.exec(trade_statement).all()
+    return TradeList(items=list(trades), total=total, limit=limit, offset=offset)
+
+
+def list_audit_events(
+    session: Session,
+    *,
+    trade_id: str | None = None,
+    event_type: str | None = None,
+    limit: int = 20,
+    offset: int = 0,
+) -> AuditEventList:
+    filters = []
+    if trade_id:
+        filters.append(AuditEvent.trade_id == trade_id)
+    if event_type:
+        filters.append(AuditEvent.event_type == event_type)
+
+    count_statement = select(func.count()).select_from(AuditEvent)
+    if filters:
+        count_statement = count_statement.where(*filters)
+    total = session.exec(count_statement).one()
+
+    event_statement = (
+        select(AuditEvent)
+        .where(*filters)
+        .order_by(AuditEvent.created_at.desc(), AuditEvent.id.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    events = session.exec(event_statement).all()
+    return AuditEventList(items=list(events), total=total, limit=limit, offset=offset)
 
 
 def format_trade_summary(trade: Trade) -> str:
@@ -117,6 +318,46 @@ def format_trade_status(trade: Trade, orders: list[TradeOrder]) -> str:
     return "\n".join(lines)
 
 
+def format_trade_orders(trade: Trade, orders: list[TradeOrder]) -> str:
+    lines = [
+        f"Ordres du trade {trade.id}",
+        f"{trade.side.upper()} {trade.pair} | statut={trade.status}",
+    ]
+    if not orders:
+        lines.append("Aucun ordre attache.")
+    else:
+        lines.extend(format_trade_order(order) for order in orders)
+    return "\n".join(lines)
+
+
+def format_trade_list(trades: TradeList) -> str:
+    if not trades.items:
+        return "Aucun trade trouve."
+
+    start = trades.offset + 1
+    end = trades.offset + len(trades.items)
+    lines = [f"Trades recents {start}-{end}/{trades.total}:"]
+    for trade in trades.items:
+        lines.append(
+            f"- {trade.id} | {trade.status} | {trade.side.upper()} {trade.pair} | "
+            f"{trade.amount_usdc:g} USDC | entry={trade.entry_price:g}"
+        )
+    return "\n".join(lines)
+
+
+def format_audit_events(events: AuditEventList) -> str:
+    if not events.items:
+        return "Aucun evenement d'audit trouve."
+
+    start = events.offset + 1
+    end = events.offset + len(events.items)
+    lines = [f"Audit {start}-{end}/{events.total}:"]
+    for event in events.items:
+        trade = f" | trade={event.trade_id}" if event.trade_id else ""
+        lines.append(f"- {event.event_type}{trade} | {event.message}")
+    return "\n".join(lines)
+
+
 def format_trade_order(order: TradeOrder) -> str:
     reduce_only = "oui" if order.reduce_only else "non"
     target = f" | target={order.target_percent:g}%" if order.target_percent is not None else ""
@@ -128,8 +369,19 @@ def format_trade_order(order: TradeOrder) -> str:
     )
 
 
-def list_trade_orders(trade_id: str, session: Session) -> list[TradeOrder]:
-    orders = session.exec(select(TradeOrder).where(TradeOrder.trade_id == trade_id)).all()
+def list_trade_orders(
+    trade_id: str,
+    session: Session,
+    *,
+    status: OrderStatus | None = None,
+    role: OrderRole | None = None,
+) -> list[TradeOrder]:
+    filters = [TradeOrder.trade_id == trade_id]
+    if status is not None:
+        filters.append(TradeOrder.status == status)
+    if role is not None:
+        filters.append(TradeOrder.role == role)
+    orders = session.exec(select(TradeOrder).where(*filters)).all()
     return sorted(orders, key=order_sort_key)
 
 
@@ -182,13 +434,13 @@ def mark_entry_orders_submitted(trade_id: str, result: dict[str, str], session: 
 
 
 def cancel_planned_orders(trade_id: str, session: Session) -> None:
-    planned_orders = session.exec(
+    cancellable_orders = session.exec(
         select(TradeOrder).where(
             TradeOrder.trade_id == trade_id,
-            TradeOrder.status == OrderStatus.PLANNED,
+            TradeOrder.status.in_([OrderStatus.PLANNED, OrderStatus.READY_TO_SUBMIT]),
         )
     ).all()
-    for order in planned_orders:
+    for order in cancellable_orders:
         order.status = OrderStatus.CANCELLED
         order.updated_at = utc_now()
         session.add(order)

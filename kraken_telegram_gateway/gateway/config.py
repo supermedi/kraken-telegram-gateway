@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     live_trading_enabled: bool = False
     max_amount_usdc: float = 100
     max_leverage: int = 2
+    require_stop_loss_for_confirmation: bool = False
     allowed_pairs: str = "PF_XBTUSD,PF_ETHUSD"
     telegram_bot_token: str | None = None
     telegram_webhook_secret: str | None = None
@@ -20,6 +21,7 @@ class Settings(BaseSettings):
     kraken_api_key: str | None = None
     kraken_api_secret: str | None = None
     kraken_futures_base_url: str = "https://futures.kraken.com"
+    kraken_instrument_metadata_path: str | None = None
 
     @property
     def allowed_pair_set(self) -> set[str]:

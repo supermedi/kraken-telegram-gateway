@@ -9,8 +9,10 @@ from kraken_telegram_gateway.gateway.kraken import (
     KrakenFuturesSigner,
     KrakenLiveTradingDisabledError,
     KrakenOrderPayloadError,
+    LocalInstrumentMetadataProvider,
 )
 from kraken_telegram_gateway.gateway.models import Trade
+from kraken_telegram_gateway.gateway.models import TradeOrder
 
 
 def make_trade() -> Trade:
@@ -134,6 +136,91 @@ def test_entry_order_payload_converts_usdc_to_contract_size_with_metadata():
     }
 
 
+def test_target_order_payload_is_reduce_only_and_uses_target_amount():
+    trade = make_trade()
+    order = TradeOrder(
+        id="target-1",
+        trade_id=trade.id,
+        role="target_exit",
+        pair="PF_XBTUSD",
+        side="sell",
+        price=67000,
+        amount_usdc=40,
+        target_percent=40,
+        reduce_only=True,
+    )
+    client = KrakenClient(Settings())
+    instrument = InstrumentMetadata(
+        symbol="PF_XBTUSD",
+        contract_value_usdc=Decimal("5"),
+        size_step=Decimal("0.5"),
+        min_size=Decimal("1"),
+    )
+
+    payload = client.build_target_order_payload(trade, order, instrument)
+
+    assert payload == {
+        "symbol": "PF_XBTUSD",
+        "orderType": "lmt",
+        "side": "sell",
+        "size": "16",
+        "limitPrice": "67000",
+        "reduceOnly": True,
+    }
+
+
+def test_dry_run_target_submission_returns_local_external_order_id():
+    trade = make_trade()
+    order = TradeOrder(
+        id="target-1",
+        trade_id=trade.id,
+        role="target_exit",
+        pair="PF_XBTUSD",
+        side="sell",
+        price=67000,
+        amount_usdc=40,
+        target_percent=40,
+        reduce_only=True,
+    )
+    client = KrakenClient(Settings(kraken_api_key="public-key", kraken_api_secret="not-base64"))
+
+    result = client.submit_target_order(trade, order)
+
+    assert result["mode"] == "dry_run"
+    assert result["external_order_id"] == "dryrun-target-target-1"
+
+
+def test_local_instrument_metadata_provider_loads_cached_json(tmp_path):
+    metadata_file = tmp_path / "instruments.json"
+    metadata_file.write_text(
+        """
+        {
+          "instruments": {
+            "PF_XBTUSD": {
+              "contract_value_usdc": "5",
+              "size_step": "0.5",
+              "min_size": "1"
+            }
+          }
+        }
+        """,
+        encoding="utf-8",
+    )
+    provider = LocalInstrumentMetadataProvider(str(metadata_file))
+
+    instrument = provider.get("pf_xbtusd")
+    metadata_file.write_text("not-json", encoding="utf-8")
+    cached_instrument = provider.get("PF_XBTUSD")
+
+    assert instrument == InstrumentMetadata(
+        symbol="PF_XBTUSD",
+        contract_value_usdc=Decimal("5"),
+        size_step=Decimal("0.5"),
+        min_size=Decimal("1"),
+    )
+    assert cached_instrument == instrument
+
+
 def test_live_entry_submission_is_blocked_until_instrument_metadata_exists():
     client = KrakenClient(
         Settings(
@@ -148,3 +235,85 @@ def test_live_entry_submission_is_blocked_until_instrument_metadata_exists():
 
     assert result["mode"] == "blocked"
     assert "instrument metadata" in result["message"]
+
+
+def test_live_entry_submission_stays_blocked_after_metadata_payload_is_prepared(tmp_path):
+    metadata_file = tmp_path / "instruments.json"
+    metadata_file.write_text(
+        """
+        {
+          "instruments": [
+            {
+              "symbol": "PF_XBTUSD",
+              "contract_value_usdc": "5",
+              "size_step": "0.5",
+              "min_size": "1"
+            }
+          ]
+        }
+        """,
+        encoding="utf-8",
+    )
+    client = KrakenClient(
+        Settings(
+            dry_run=False,
+            live_trading_enabled=True,
+            kraken_api_key="public-key",
+            kraken_api_secret="dGVzdC1zZWNyZXQ=",
+            kraken_instrument_metadata_path=str(metadata_file),
+        )
+    )
+
+    result = client.submit_entry_order(make_trade())
+
+    assert result == {
+        "mode": "blocked",
+        "message": "Live Kraken submission blocked: network submission is intentionally disabled for V1.",
+    }
+
+
+def test_live_target_submission_stays_blocked_after_metadata_payload_is_prepared(tmp_path):
+    trade = make_trade()
+    order = TradeOrder(
+        id="target-1",
+        trade_id=trade.id,
+        role="target_exit",
+        pair="PF_XBTUSD",
+        side="sell",
+        price=67000,
+        amount_usdc=40,
+        target_percent=40,
+        reduce_only=True,
+    )
+    metadata_file = tmp_path / "instruments.json"
+    metadata_file.write_text(
+        """
+        {
+          "instruments": [
+            {
+              "symbol": "PF_XBTUSD",
+              "contract_value_usdc": "5",
+              "size_step": "0.5",
+              "min_size": "1"
+            }
+          ]
+        }
+        """,
+        encoding="utf-8",
+    )
+    client = KrakenClient(
+        Settings(
+            dry_run=False,
+            live_trading_enabled=True,
+            kraken_api_key="public-key",
+            kraken_api_secret="dGVzdC1zZWNyZXQ=",
+            kraken_instrument_metadata_path=str(metadata_file),
+        )
+    )
+
+    result = client.submit_target_order(trade, order)
+
+    assert result == {
+        "mode": "blocked",
+        "message": "Live Kraken target submission blocked: network submission is intentionally disabled for V1.",
+    }

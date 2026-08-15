@@ -1,6 +1,6 @@
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlmodel import Session
 
@@ -8,8 +8,19 @@ from kraken_telegram_gateway.gateway.config import Settings, get_settings
 from kraken_telegram_gateway.gateway.db import get_session, init_db
 from kraken_telegram_gateway.gateway.parser import CommandParseError
 from kraken_telegram_gateway.gateway.risk import RiskValidationError
-from kraken_telegram_gateway.gateway.schemas import ConfirmResult, TradeDetail, TradePreview
-from kraken_telegram_gateway.gateway.service import cancel_trade, confirm_trade, create_trade_preview, get_trade_detail
+from kraken_telegram_gateway.gateway.models import OrderRole, OrderStatus, TradeOrder, TradeStatus
+from kraken_telegram_gateway.gateway.schemas import AuditEventList, ConfirmResult, TradeDetail, TradeList, TradePreview
+from kraken_telegram_gateway.gateway.service import (
+    cancel_trade,
+    confirm_trade,
+    create_trade_preview,
+    get_trade_detail,
+    get_trade_orders,
+    list_audit_events,
+    list_trades,
+    mark_entry_filled,
+    submit_ready_targets,
+)
 from kraken_telegram_gateway.gateway.telegram import (
     TelegramUpdateError,
     extract_chat_id,
@@ -62,12 +73,67 @@ def cancel_command(trade_id: str, session: Session = Depends(get_session)) -> Co
     return cancel_trade(trade_id, session)
 
 
+@app.post("/commands/entry-filled/{trade_id}", response_model=ConfirmResult)
+def entry_filled_command(trade_id: str, session: Session = Depends(get_session)) -> ConfirmResult:
+    return mark_entry_filled(trade_id, session)
+
+
+@app.post("/commands/submit-targets/{trade_id}", response_model=ConfirmResult)
+def submit_targets_command(
+    trade_id: str,
+    session: Session = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> ConfirmResult:
+    return submit_ready_targets(trade_id, session, settings)
+
+
+@app.get("/trades", response_model=TradeList)
+def get_trade_list(
+    status: TradeStatus | None = None,
+    pair: str | None = None,
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    session: Session = Depends(get_session),
+) -> TradeList:
+    return list_trades(session, status=status, pair=pair, limit=limit, offset=offset)
+
+
+@app.get("/audit", response_model=AuditEventList)
+def get_audit_event_list(
+    trade_id: str | None = None,
+    event_type: str | None = None,
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    session: Session = Depends(get_session),
+) -> AuditEventList:
+    return list_audit_events(
+        session,
+        trade_id=trade_id,
+        event_type=event_type,
+        limit=limit,
+        offset=offset,
+    )
+
+
 @app.get("/trades/{trade_id}", response_model=TradeDetail)
 def get_trade(trade_id: str, session: Session = Depends(get_session)) -> TradeDetail:
     detail = get_trade_detail(trade_id, session)
     if detail is None:
         raise HTTPException(status_code=404, detail="Trade not found")
     return detail
+
+
+@app.get("/trades/{trade_id}/orders", response_model=list[TradeOrder])
+def get_trade_order_list(
+    trade_id: str,
+    status: OrderStatus | None = None,
+    role: OrderRole | None = None,
+    session: Session = Depends(get_session),
+) -> list[TradeOrder]:
+    orders = get_trade_orders(trade_id, session, status=status, role=role)
+    if orders is None:
+        raise HTTPException(status_code=404, detail="Trade not found")
+    return orders
 
 
 @app.post("/telegram/webhook")
