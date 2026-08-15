@@ -91,6 +91,35 @@ def test_confirm_marks_only_entry_order_as_dry_run_submitted():
     assert target_order.status == OrderStatus.PLANNED
 
 
+def test_confirm_with_live_gate_open_rejects_until_instrument_metadata_exists():
+    settings = Settings(
+        max_amount_usdc=100,
+        dry_run=False,
+        live_trading_enabled=True,
+        kraken_api_key="public-key",
+        kraken_api_secret="dGVzdC1zZWNyZXQ=",
+    )
+    with make_session() as session:
+        preview_reply = dispatch_telegram_text(
+            "/trade pair=PF_XBTUSD side=buy amount_usdc=100 entry=limit:65000 t1=67000:100%",
+            session,
+            settings,
+        )
+        trade_id = next(line.split(": ", 1)[1] for line in preview_reply.splitlines() if line.startswith("Trade ID:"))
+
+        confirm_reply = dispatch_telegram_text(f"/confirm {trade_id}", session, settings)
+        trade = session.get(Trade, trade_id)
+        entry_order = session.exec(
+            select(TradeOrder).where(TradeOrder.trade_id == trade_id, TradeOrder.role == OrderRole.ENTRY)
+        ).one()
+
+    assert "Live Kraken submission blocked" in confirm_reply
+    assert "Statut: rejected" in confirm_reply
+    assert trade is not None
+    assert trade.status == "rejected"
+    assert entry_order.status == OrderStatus.PLANNED
+
+
 def test_status_includes_planned_order_visibility():
     with make_session() as session:
         preview_reply = dispatch_telegram_text(

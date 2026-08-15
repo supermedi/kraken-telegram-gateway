@@ -56,11 +56,18 @@ def confirm_trade(trade_id: str, session: Session, settings: Settings) -> Confir
         return ConfirmResult(trade_id=trade.id, status=trade.status, message="Trade deja traite.")
 
     result = KrakenClient(settings).submit_entry_order(trade)
-    trade.status = TradeStatus.DRY_RUN_EXECUTED if result["mode"] == "dry_run" else TradeStatus.LIVE_SUBMITTED
+    if result["mode"] == "dry_run":
+        trade.status = TradeStatus.DRY_RUN_EXECUTED
+    elif result["mode"] == "blocked":
+        trade.status = TradeStatus.REJECTED
+    else:
+        trade.status = TradeStatus.LIVE_SUBMITTED
     trade.updated_at = utc_now()
     session.add(trade)
-    mark_entry_orders_submitted(trade.id, result, session)
-    session.add(AuditEvent(trade_id=trade.id, event_type="trade_confirmed", message=result["message"]))
+    if result["mode"] != "blocked":
+        mark_entry_orders_submitted(trade.id, result, session)
+    event_type = "trade_rejected" if result["mode"] == "blocked" else "trade_confirmed"
+    session.add(AuditEvent(trade_id=trade.id, event_type=event_type, message=result["message"]))
     session.commit()
     return ConfirmResult(trade_id=trade.id, status=trade.status, message=result["message"])
 

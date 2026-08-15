@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     telegram_allowed_user_ids: str = ""
     kraken_api_key: str | None = None
     kraken_api_secret: str | None = None
+    kraken_futures_base_url: str = "https://futures.kraken.com"
 
     @property
     def allowed_pair_set(self) -> set[str]:

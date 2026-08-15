@@ -2,7 +2,11 @@
 
 MVP local pour parser et valider des intentions de trades Kraken Futures envoyees depuis Telegram.
 
-La V1 est verrouillee en dry-run par defaut. Aucun ordre reel ne part vers Kraken sans configuration explicite de `LIVE_TRADING_ENABLED=false -> true`, `DRY_RUN=true -> false`, et des cles API.
+La V1 est verrouillee en dry-run par defaut. Aucun ordre reel ne part vers Kraken sans configuration explicite de `LIVE_TRADING_ENABLED=false -> true`, `DRY_RUN=true -> false`, et des cles API. La signature REST Kraken Futures est preparee pour revue, mais la soumission reseau live reste bloquee.
+
+## Securite Kraken Futures
+
+Le montant utilisateur reste exprime en USDC. Pour un ordre live Kraken Futures, le systeme doit convertir ce montant en `size` de contrat a partir de metadonnees d'instrument verifiees : valeur USDC par contrat, increment de taille et taille minimale. Si ces metadonnees ne sont pas disponibles, la confirmation est rejetee et aucun payload live n'est signe ni soumis.
 
 ## Installation
 
