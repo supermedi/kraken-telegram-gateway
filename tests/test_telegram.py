@@ -239,6 +239,25 @@ def test_balance_command_formats_kraken_futures_balances(monkeypatch):
     assert reply == "Solde Kraken Futures:\n- flex USDC | balance=100 | equity=105 | available=90 | margin=15"
 
 
+def test_balance_command_hides_empty_instrument_accounts(monkeypatch):
+    def fake_fetch_account_balances(self):
+        return [
+            AccountBalance(account="fi_adausd", currency="ADA"),
+            AccountBalance(account="fi_linkusd", currency="LINK", balance=0, available=0),
+            AccountBalance(account="flex", currency="USDC", balance=96.8, available=96.8),
+        ]
+
+    monkeypatch.setattr(
+        "kraken_telegram_gateway.gateway.kraken.KrakenClient.fetch_account_balances",
+        fake_fetch_account_balances,
+    )
+
+    with make_session() as session:
+        reply = dispatch_telegram_text("/balance", session, Settings())
+
+    assert reply == "Solde Kraken Futures:\n- flex USDC | balance=96.8 | available=96.8"
+
+
 def test_balance_command_filters_account_and_currency(monkeypatch):
     def fake_fetch_account_balances(self):
         return [
@@ -363,6 +382,28 @@ def test_orders_command_filters_status_and_role():
     assert "statut=dry_run_submitted" not in orders_reply
     assert "- target_exit: sell limit 67000 | 40 USDC | target=40% | reduce-only=oui | statut=planned" in orders_reply
     assert "- target_exit: sell limit 69000 | 60 USDC | target=60% | reduce-only=oui | statut=planned" in orders_reply
+
+
+def test_orders_command_accepts_case_insensitive_filters():
+    settings = Settings(max_amount_usdc=100)
+    with make_session() as session:
+        preview_reply = dispatch_telegram_text(
+            "/trade pair=PF_XBTUSD side=buy amount_usdc=100 entry=limit:65000 "
+            "t1=67000:100%",
+            session,
+            settings,
+        )
+        trade_id = next(line.split(": ", 1)[1] for line in preview_reply.splitlines() if line.startswith("Trade ID:"))
+        dispatch_telegram_text(f"/confirm {trade_id}", session, settings)
+
+        orders_reply = dispatch_telegram_text(
+            f"/orders {trade_id} status=DRY_RUN_SUBMITTED role=ENTRY",
+            session,
+            settings,
+        )
+
+    assert "- entry: buy limit 65000 | 100 USDC | reduce-only=non | statut=dry_run_submitted" in orders_reply
+    assert "- target_exit:" not in orders_reply
 
 
 def test_entry_filled_command_marks_targets_ready_for_mobile_visibility():
@@ -656,7 +697,7 @@ def test_trades_command_filters_status_pair_and_side():
         )
         dispatch_telegram_text(f"/cancel {xbt_trade_id}", session, settings)
 
-        reply = dispatch_telegram_text("/trades status=cancelled pair=pf_xbtusd side=BUY", session, settings)
+        reply = dispatch_telegram_text("/trades status=CANCELLED pair=pf_xbtusd side=BUY", session, settings)
 
     assert reply.startswith("Trades recents 1-1/1:")
     assert xbt_trade_id in reply
@@ -719,8 +760,8 @@ def test_audit_command_accepts_short_event_type_filter_aliases():
         )
         dispatch_telegram_text(f"/cancel {cancelled_trade_id}", session, settings)
 
-        type_reply = dispatch_telegram_text("/audit type=trade_rejected", session, settings)
-        event_reply = dispatch_telegram_text("/audit event=trade_cancelled", session, settings)
+        type_reply = dispatch_telegram_text("/audit type=TRADE_REJECTED", session, settings)
+        event_reply = dispatch_telegram_text("/audit event=TRADE_CANCELLED", session, settings)
 
     assert type_reply.startswith("Audit 1-1/1:")
     assert "trade_rejected" in type_reply

@@ -222,7 +222,7 @@ def _parse_order_filters(argument: str) -> tuple[str, dict]:
             raise ValueError(f"unsupported /orders filter: {key}")
         if not value:
             raise ValueError(f"/orders {key} cannot be empty")
-        filters[key] = OrderStatus(value) if key == "status" else OrderRole(value)
+        filters[key] = OrderStatus(value.lower()) if key == "status" else OrderRole(value.lower())
     return trade_id, filters
 
 
@@ -258,7 +258,7 @@ def _parse_trades_filters(argument: str) -> dict:
         if key in {"limit", "offset"}:
             filters[key] = int(value)
         elif key == "status":
-            filters[key] = TradeStatus(value)
+            filters[key] = TradeStatus(value.lower())
         elif key == "side":
             normalized_side = value.lower()
             if normalized_side not in {"buy", "sell"}:
@@ -296,7 +296,9 @@ def _parse_audit_filters(argument: str) -> dict:
         if key in {"limit", "offset"}:
             filters[key] = int(value)
         elif key in {"type", "event"}:
-            filters["event_type"] = value
+            filters["event_type"] = value.lower()
+        elif key == "event_type":
+            filters[key] = value.lower()
         else:
             filters[key] = value
 

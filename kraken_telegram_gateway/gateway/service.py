@@ -339,7 +339,11 @@ def get_account_balances(
     account: str | None = None,
     currency: str | None = None,
 ) -> list[AccountBalance]:
-    balances = KrakenClient(settings).fetch_account_balances()
+    balances = [
+        balance
+        for balance in KrakenClient(settings).fetch_account_balances()
+        if has_visible_account_balance(balance)
+    ]
     if account:
         wanted_account = account.lower()
         balances = [balance for balance in balances if balance.account.lower() == wanted_account]
@@ -347,6 +351,13 @@ def get_account_balances(
         wanted_currency = currency.upper()
         balances = [balance for balance in balances if balance.currency.upper() == wanted_currency]
     return balances
+
+
+def has_visible_account_balance(balance: AccountBalance) -> bool:
+    return any(
+        value is not None and value != 0
+        for value in (balance.balance, balance.equity, balance.available, balance.margin)
+    )
 
 
 def format_trade_summary(trade: Trade) -> str:
