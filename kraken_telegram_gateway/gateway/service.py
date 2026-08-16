@@ -256,6 +256,7 @@ def list_trades(
     *,
     status: TradeStatus | None = None,
     pair: str | None = None,
+    side: str | None = None,
     limit: int = 20,
     offset: int = 0,
 ) -> TradeList:
@@ -264,6 +265,11 @@ def list_trades(
         filters.append(Trade.status == status)
     if pair:
         filters.append(Trade.pair == pair.upper())
+    if side:
+        normalized_side = side.lower()
+        if normalized_side not in {"buy", "sell"}:
+            raise ValueError("/trades side must be buy or sell")
+        filters.append(Trade.side == normalized_side)
 
     count_statement = select(func.count()).select_from(Trade)
     if filters:

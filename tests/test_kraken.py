@@ -196,6 +196,41 @@ def test_fetch_account_balances_retries_without_nonce_on_authentication_error(mo
     assert balances == [AccountBalance(account="flex", currency="USDC", balance=Decimal("42"))]
 
 
+def test_fetch_account_balances_exposes_safe_debug_detail_on_error(monkeypatch):
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"result": "error", "error": "authenticationError"}
+
+    monkeypatch.setattr(
+        "kraken_telegram_gateway.gateway.kraken.httpx.request",
+        lambda method, url, *, headers, timeout: FakeResponse(),
+    )
+    client = KrakenClient(
+        Settings(
+            dry_run=True,
+            live_trading_enabled=False,
+            kraken_api_key="public-key",
+            kraken_api_secret="dGVzdC1zZWNyZXQ=",
+            kraken_futures_base_url="https://example.test",
+        )
+    )
+
+    with pytest.raises(KrakenAccountError) as exc_info:
+        client.fetch_account_balances()
+
+    debug_detail = exc_info.value.debug_detail
+    assert debug_detail is not None
+    assert "kraken_error=authenticationError" in debug_detail
+    assert "url=https://example.test/derivatives/api/v3/accounts" in debug_detail
+    assert "signed_endpoint_path=/api/v3/accounts" in debug_detail
+    assert "retried_without_nonce=oui" in debug_detail
+    assert "APIKey" not in debug_detail
+    assert "Authent" not in debug_detail
+
+
 def test_parse_account_balances_reads_currency_rows():
     balances = parse_account_balances(
         {

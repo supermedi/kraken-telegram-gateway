@@ -102,12 +102,12 @@ def dispatch_telegram_text(text: str, session: Session, settings: Settings) -> s
             result = cancel_trade(trade_id, session)
             return f"{result.message}\nTrade ID: {result.trade_id}\nStatut: {result.status}"
 
-        if command == "/entry_filled":
+        if command in {"/entry_filled", "/entry-filled"}:
             trade_id = _require_trade_id(argument, "/entry_filled")
             result = mark_entry_filled(trade_id, session)
             return f"{result.message}\nTrade ID: {result.trade_id}\nStatut: {result.status}"
 
-        if command == "/submit_targets":
+        if command in {"/submit_targets", "/submit-targets"}:
             trade_id = _require_trade_id(argument, "/submit_targets")
             result = submit_ready_targets(trade_id, session, settings)
             return f"{result.message}\nTrade ID: {result.trade_id}\nStatut: {result.status}"
@@ -139,7 +139,7 @@ def dispatch_telegram_text(text: str, session: Session, settings: Settings) -> s
             events = list_audit_events(session, **filters)
             return format_audit_events(events)
 
-        if command == "/audit_types":
+        if command in {"/audit_types", "/audit-types"}:
             if argument:
                 raise ValueError("/audit_types does not accept arguments")
             return format_audit_event_types(list_audit_event_types(session))
@@ -161,14 +161,20 @@ def dispatch_telegram_text(text: str, session: Session, settings: Settings) -> s
                 "/submit_targets <trade_id>, "
                 "/cancel <trade_id>, "
                 "/status [trade_id], /orders <trade_id> [status=... role=...], "
-                "/trades [limit=5 status=... pair=...], "
-                "/audit [trade_id] [event_type=... limit=5], /audit_types, "
-                "/balance [account=... currency=...], /pause, /resume.\n"
+                "/trades [limit=5 status=... pair=... side=buy|sell], "
+                "/audit [trade_id] [event_type=...|type=... limit=5], /audit_types, "
+                "/balance [account=... currency=...|asset=...], /pause, /resume.\n"
                 "Exemple: /trade pair=PF_XBTUSD side=buy amount_usdc=100 entry=limit:65000 "
                 "t1=67000:40% t2=69000:40% t3=72000:20%\n"
                 "Exemple court: LINK LONG 25USDC 2x Entry 9.356 Sl 9.298"
             )
     except (CommandParseError, RiskValidationError, KrakenAccountError, KrakenLiveTradingDisabledError, ValueError) as exc:
+        if (
+            isinstance(exc, KrakenAccountError)
+            and settings.kraken_balance_debug_errors
+            and exc.debug_detail
+        ):
+            return f"Commande refusee: {exc}\nDebug Kraken balance:\n{exc.debug_detail}"
         return f"Commande refusee: {exc}"
 
     return "Commande inconnue. Envoie /help."
@@ -239,7 +245,7 @@ def _parse_trades_filters(argument: str) -> dict:
     if not argument:
         return filters
 
-    allowed_keys = {"limit", "offset", "status", "pair"}
+    allowed_keys = {"limit", "offset", "status", "pair", "side"}
     for token in argument.split():
         if "=" not in token:
             raise ValueError("/trades arguments must be key=value")
@@ -253,6 +259,11 @@ def _parse_trades_filters(argument: str) -> dict:
             filters[key] = int(value)
         elif key == "status":
             filters[key] = TradeStatus(value)
+        elif key == "side":
+            normalized_side = value.lower()
+            if normalized_side not in {"buy", "sell"}:
+                raise ValueError("/trades side must be buy or sell")
+            filters[key] = normalized_side
         else:
             filters[key] = value
 
@@ -272,7 +283,7 @@ def _parse_audit_filters(argument: str) -> dict:
     if tokens and "=" not in tokens[0]:
         filters["trade_id"] = tokens.pop(0)
 
-    allowed_keys = {"limit", "offset", "trade_id", "event_type"}
+    allowed_keys = {"limit", "offset", "trade_id", "event_type", "type", "event"}
     for token in tokens:
         if "=" not in token:
             raise ValueError("/audit arguments must be key=value")
@@ -284,6 +295,8 @@ def _parse_audit_filters(argument: str) -> dict:
             raise ValueError(f"/audit {key} cannot be empty")
         if key in {"limit", "offset"}:
             filters[key] = int(value)
+        elif key in {"type", "event"}:
+            filters["event_type"] = value
         else:
             filters[key] = value
 
@@ -299,7 +312,7 @@ def _parse_balance_filters(argument: str) -> dict:
     if not argument:
         return filters
 
-    allowed_keys = {"account", "currency"}
+    allowed_keys = {"account", "currency", "asset", "devise"}
     for token in argument.split():
         if "=" not in token:
             raise ValueError("/balance arguments must be key=value")
@@ -309,5 +322,8 @@ def _parse_balance_filters(argument: str) -> dict:
             raise ValueError(f"unsupported /balance argument: {key}")
         if not value:
             raise ValueError(f"/balance {key} cannot be empty")
-        filters[key] = value
+        if key in {"asset", "devise"}:
+            filters["currency"] = value
+        else:
+            filters[key] = value
     return filters

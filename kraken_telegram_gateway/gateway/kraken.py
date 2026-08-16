@@ -26,6 +26,10 @@ class KrakenOrderPayloadError(ValueError):
 class KrakenAccountError(RuntimeError):
     """Raised when Kraken account data cannot be fetched or parsed."""
 
+    def __init__(self, message: str, *, debug_detail: str | None = None):
+        super().__init__(message)
+        self.debug_detail = debug_detail
+
 
 @dataclass(frozen=True)
 class KrakenAuthenticatedRequest:
@@ -177,6 +181,7 @@ class KrakenClient:
 
     def fetch_account_balances(self) -> list[AccountBalance]:
         request = self.build_account_request()
+        retried_without_nonce = False
         try:
             response = httpx.request(request.method, request.url, headers=request.headers, timeout=10)
             response.raise_for_status()
@@ -188,6 +193,7 @@ class KrakenClient:
 
         if is_kraken_authentication_error(payload) and "Nonce" in request.headers:
             request = self.build_account_request(include_nonce=False)
+            retried_without_nonce = True
             try:
                 response = httpx.request(request.method, request.url, headers=request.headers, timeout=10)
                 response.raise_for_status()
@@ -197,6 +203,16 @@ class KrakenClient:
             except ValueError as exc:
                 raise KrakenAccountError("Kraken balance response is not valid JSON.") from exc
 
+        if str(payload.get("result", "success")).lower() != "success" if isinstance(payload, Mapping) else False:
+            raise KrakenAccountError(
+                f"Kraken balance request was not successful: {payload.get('error') or payload}",
+                debug_detail=format_account_error_debug_detail(
+                    request,
+                    payload,
+                    retried_without_nonce=retried_without_nonce,
+                    base_url=self.settings.kraken_futures_base_url,
+                ),
+            )
         return parse_account_balances(payload)
 
     def build_account_request(self, *, include_nonce: bool = True) -> KrakenAuthenticatedRequest:
@@ -318,6 +334,34 @@ def is_kraken_authentication_error(payload: object) -> bool:
     if isinstance(error, list):
         return "authenticationError" in error
     return False
+
+
+def format_account_error_debug_detail(
+    request: KrakenAuthenticatedRequest,
+    payload: Mapping[str, object],
+    *,
+    retried_without_nonce: bool,
+    base_url: str,
+) -> str:
+    error = payload.get("error")
+    if isinstance(error, list):
+        error_text = ", ".join(str(item) for item in error)
+    else:
+        error_text = str(error)
+    return "\n".join(
+        [
+            f"kraken_result={payload.get('result')}",
+            f"kraken_error={error_text}",
+            f"method={request.method}",
+            f"url={request.url}",
+            f"signed_endpoint_path={request.endpoint_path}",
+            f"request_path={request.request_path}",
+            f"base_url={base_url.rstrip('/')}",
+            f"nonce_sent={'oui' if 'Nonce' in request.headers else 'non'}",
+            f"retried_without_nonce={'oui' if retried_without_nonce else 'non'}",
+            f"response_keys={','.join(str(key) for key in payload.keys())}",
+        ]
+    )
 
 
 def calculate_contract_size(amount_usdc: Decimal, leverage: Decimal, instrument: InstrumentMetadata) -> Decimal:

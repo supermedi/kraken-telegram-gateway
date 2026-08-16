@@ -437,6 +437,7 @@ def test_trade_list_api_returns_recent_trades_with_filters_and_pagination():
         all_response = client.get("/trades")
         cancelled_response = client.get("/trades", params={"status": "cancelled"})
         xbt_response = client.get("/trades", params={"pair": "pf_xbtusd"})
+        sell_response = client.get("/trades", params={"side": "sell"})
         page_response = client.get("/trades", params={"limit": 1, "offset": 1})
 
     assert all_response.status_code == 200
@@ -452,6 +453,10 @@ def test_trade_list_api_returns_recent_trades_with_filters_and_pagination():
     assert xbt_response.status_code == 200
     assert xbt_response.json()["total"] == 2
     assert [trade["id"] for trade in xbt_response.json()["items"]] == [third, first]
+
+    assert sell_response.status_code == 200
+    assert sell_response.json()["total"] == 1
+    assert [trade["id"] for trade in sell_response.json()["items"]] == [third]
 
     assert page_response.status_code == 200
     page_payload = page_response.json()

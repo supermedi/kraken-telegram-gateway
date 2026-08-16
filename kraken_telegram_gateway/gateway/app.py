@@ -114,11 +114,12 @@ def submit_targets_command(
 def get_trade_list(
     status: TradeStatus | None = None,
     pair: str | None = None,
+    side: str | None = Query(default=None, pattern="^(?i:buy|sell)$"),
     limit: int = Query(default=20, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
     session: Session = Depends(get_session),
 ) -> TradeList:
-    return list_trades(session, status=status, pair=pair, limit=limit, offset=offset)
+    return list_trades(session, status=status, pair=pair, side=side, limit=limit, offset=offset)
 
 
 @app.get("/audit", response_model=AuditEventList)

@@ -15,13 +15,13 @@ The hourly isolated cron must use this file as the handoff point between runs:
 - Project: Kraken Futures <-> Telegram trading gateway.
 - Runtime: Python/FastAPI with SQLite persistence.
 - Safety mode: dry-run only by default; live Kraken execution is not approved.
-- Telegram: webhook endpoint, command dispatcher, user allowlist, webhook secret, pause/resume, retry idempotency, `/balance`/`/solde` read-only Kraken Futures account balance lookup with `account`/`currency` filters, idempotent `/cancel <trade_id>`, `/status <trade_id>` trade visibility, `/orders <trade_id>` compact order visibility with `status`/`role` filters, `/trades` recent-list visibility with filters, `/audit` safety-event diagnostics, `/audit_types` event-type counters, idempotent `/entry_filled <trade_id>` local lifecycle tracking, and idempotent `/submit_targets <trade_id>` dry-run target submission are implemented.
+- Telegram: webhook endpoint, command dispatcher, user allowlist, webhook secret, pause/resume, retry idempotency, `/balance`/`/solde` read-only Kraken Futures account balance lookup with `account`/`currency` plus `asset`/`devise` currency aliases, idempotent `/cancel <trade_id>`, `/status <trade_id>` trade visibility, `/orders <trade_id>` compact order visibility with `status`/`role` filters, `/trades` recent-list visibility with `limit`/`offset`/`status`/`pair`/`side` filters, `/audit` safety-event diagnostics with `event_type`/`type`/`event` filters, `/audit_types` and `/audit-types` event-type counters, idempotent `/entry_filled <trade_id>`/`/entry-filled <trade_id>` local lifecycle tracking, and idempotent `/submit_targets <trade_id>`/`/submit-targets <trade_id>` dry-run target submission are implemented.
 - Risk policy: stop loss is optional by default with a warning; `REQUIRE_STOP_LOSS_FOR_CONFIRMATION=true` rejects confirmation of no-stop trades without touching planned orders or Kraken.
-- Trading model: trade previews are persisted with planned entry orders and reduce-only target exit orders; repeated cancellation retries are no-ops that avoid duplicate audit events; confirmed entries can be marked `filled`, which moves target exits to `ready_to_submit`; ready targets can then be marked `dry_run_submitted` with local external ids and no Kraken network submission; repeated target submission retries are no-ops that preserve existing ids and avoid duplicate audit events; `/trades` lists recent trades with `limit`, `offset`, `status`, and `pair` filters; `/trades/{trade_id}` returns the trade plus attached orders; `/trades/{trade_id}/orders` returns attached orders with optional `status` and `role` filters; `/audit` lists recent audit events with `trade_id` and `event_type` filters; `/audit/event-types` returns local audit event-type counters.
+- Trading model: trade previews are persisted with planned entry orders and reduce-only target exit orders; repeated cancellation retries are no-ops that avoid duplicate audit events; confirmed entries can be marked `filled`, which moves target exits to `ready_to_submit`; ready targets can then be marked `dry_run_submitted` with local external ids and no Kraken network submission; repeated target submission retries are no-ops that preserve existing ids and avoid duplicate audit events; `/trades` lists recent trades with `limit`, `offset`, `status`, `pair`, and `side` filters; `/trades/{trade_id}` returns the trade plus attached orders; `/trades/{trade_id}/orders` returns attached orders with optional `status` and `role` filters; `/audit` lists recent audit events with `trade_id` and `event_type` filters; `/audit/event-types` returns local audit event-type counters.
 - Kraken Futures: authenticated REST signing, private request preparation, read-only `/derivatives/api/v3/accounts` balance lookup exposed through Telegram `/balance`/`/solde` and API `GET /balance` with optional filters, a local instrument metadata cache, a metadata cache validator CLI, and safe entry/target limit-order payload boundaries are implemented; live order network submission remains intentionally blocked even when metadata is available.
 - Deployment: Dockerfile, Docker Compose, GHCR publish workflow, final public image name `ghcr.io/supermedi/kraken-telegram-gateway:latest`, and deployment documentation are in place; runtime secrets stay in local `.env`.
 - GitHub: dedicated public repository created and initial code pushed to `https://github.com/supermedi/kraken-telegram-gateway`.
-- Verification baseline: `python3 -m pytest -q` was last reported passing with 83 tests on 2026-08-16.
+- Verification baseline: `python3 -m pytest -q` was last reported passing with 91 tests on 2026-08-16.
 
 ## Guardrails
 
@@ -38,9 +38,53 @@ The hourly isolated cron must use this file as the handoff point between runs:
 2. Feed the instrument metadata validator with an operator-reviewed Kraken Futures cache, then mount it via `KRAKEN_INSTRUMENT_METADATA_PATH` in VPS dry-run.
 3. Add Kraken account-event polling/webhook abstraction for real entry fill detection only after live integration is explicitly approved.
 4. Harden target-submission retry diagnostics further only if mixed blocked/submitted live-integration states need clearer operator feedback.
-5. Extend audit/balance diagnostics only if operators need retention/export, balance freshness, or richer webhook failure visibility.
+5. Extend audit/balance/Telegram diagnostics only if operators need retention/export, balance freshness, richer webhook failure visibility, or additional mobile command ergonomics.
 
 ## Cycle Log
+
+### 2026-08-16 21:44 UTC - Trade Side Filters
+
+- Chose a small operator visibility task from Next Queue item 5 because Docker/VPS validation and operator-reviewed metadata still require external environment/input.
+- Added `side=buy|sell` filtering to API `GET /trades` and Telegram `/trades`, including case-insensitive Telegram input and explicit rejection of invalid side values.
+- Updated `README.md` and `/help` examples so operators can quickly list only buy-side or sell-side planned trades from mobile.
+- Kept Kraken safety guardrails unchanged: no live-trading flag, dry-run default, Kraken order path, secrets, or network submission behavior was changed.
+
+Files changed: `kraken_telegram_gateway/gateway/app.py`, `kraken_telegram_gateway/gateway/service.py`, `kraken_telegram_gateway/gateway/telegram.py`, `tests/test_api.py`, `tests/test_telegram.py`, `README.md`, `DEV_LOG.md`.
+
+Tests: `python3 -m pytest tests/test_telegram.py::test_trades_command_filters_status_pair_and_side tests/test_telegram.py::test_trades_command_rejects_invalid_side -q` -> 2 passed. `python3 -m pytest tests/test_api.py::test_trade_list_api_returns_recent_trades_with_filters_and_pagination -q` -> 1 passed, 1 Starlette/TestClient deprecation warning. `python3 -m compileall -q kraken_telegram_gateway` -> OK. `python3 -m pytest -q` -> 91 passed, 1 Starlette/TestClient deprecation warning.
+
+### 2026-08-16 21:00 UTC - Telegram Balance Currency Aliases
+
+- Chose a small read-only Telegram ergonomics task from Next Queue item 5 because Docker/VPS validation and operator-reviewed metadata still require external environment/input.
+- Added `/balance asset=...` and `/solde devise=...` as aliases for the existing `currency=...` filter, keeping the same Kraken Futures read-only balance lookup path.
+- Updated `/help` and `README.md` so mobile balance examples include the alias behavior.
+- Kept Kraken safety guardrails unchanged: no live-trading flag, dry-run default, Kraken order path, secrets, or network submission behavior was changed.
+
+Files changed: `kraken_telegram_gateway/gateway/telegram.py`, `tests/test_telegram.py`, `README.md`, `DEV_LOG.md`.
+
+Tests: `python3 -m pytest tests/test_telegram.py::test_balance_command_filters_account_and_currency tests/test_telegram.py::test_balance_command_accepts_currency_aliases tests/test_telegram.py::test_balance_command_rejects_invalid_filter -q` -> 3 passed. `python3 -m compileall -q kraken_telegram_gateway` -> OK. `python3 -m pytest -q` -> 88 passed, 1 Starlette/TestClient deprecation warning.
+
+### 2026-08-16 19:44 UTC - Telegram Audit Filter Aliases
+
+- Chose a small Telegram diagnostics task from Next Queue item 5 because Docker/VPS validation and operator-reviewed metadata still require external environment/input.
+- Added `/audit type=...` and `/audit event=...` as mobile-friendly aliases for the existing `/audit event_type=...` filter.
+- Documented the aliases in `README.md` and surfaced `type=...` in `/help`.
+- Kept Kraken safety guardrails unchanged: no live-trading flag, dry-run default, Kraken order path, secrets, or network submission behavior was changed.
+
+Files changed: `kraken_telegram_gateway/gateway/telegram.py`, `tests/test_telegram.py`, `README.md`, `DEV_LOG.md`.
+
+Tests: `python3 -m pytest tests/test_telegram.py::test_audit_command_accepts_short_event_type_filter_aliases -q` -> 1 passed. `python3 -m compileall -q kraken_telegram_gateway` -> OK. `python3 -m pytest -q` -> 87 passed, 1 Starlette/TestClient deprecation warning.
+
+### 2026-08-16 18:44 UTC - Telegram Hyphen Command Aliases
+
+- Chose a small Telegram robustness task because Docker/VPS validation and operator-reviewed metadata still require external environment/input.
+- Added Telegram hyphen aliases for multiword commands: `/entry-filled`, `/submit-targets`, and `/audit-types`, while preserving the existing underscore commands.
+- Documented the aliases in `README.md` so Telegram usage can match the API route style more naturally.
+- Kept Kraken safety guardrails unchanged: no live-trading flag, dry-run default, Kraken order path, secrets, or network submission behavior was changed.
+
+Files changed: `kraken_telegram_gateway/gateway/telegram.py`, `tests/test_telegram.py`, `README.md`, `DEV_LOG.md`.
+
+Tests: `python3 -m pytest tests/test_telegram.py::test_entry_filled_command_accepts_hyphen_alias tests/test_telegram.py::test_submit_targets_command_accepts_hyphen_alias tests/test_telegram.py::test_audit_types_command_accepts_hyphen_alias -q` -> 3 passed. `python3 -m compileall -q kraken_telegram_gateway` -> OK. `python3 -m pytest -q` -> 86 passed, 1 Starlette/TestClient deprecation warning.
 
 ### 2026-08-16 17:49 UTC - Audit Event-Type Counters
 

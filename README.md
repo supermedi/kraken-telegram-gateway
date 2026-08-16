@@ -89,14 +89,17 @@ Commandes Telegram supportees :
 /trade LINK LONG 25USDC 2x Entry 9.356 Sl 9.298
 /confirm <trade_id>
 /entry_filled <trade_id>
+/entry-filled <trade_id>
 /submit_targets <trade_id>
+/submit-targets <trade_id>
 /cancel <trade_id>
 /status [trade_id]
 /orders <trade_id> [status=planned role=target_exit]
-/trades [limit=5 status=pending_confirmation pair=PF_XBTUSD]
-/audit [trade_id] [event_type=trade_rejected limit=5]
+/trades [limit=5 status=pending_confirmation pair=PF_XBTUSD side=buy]
+/audit [trade_id] [event_type=trade_rejected type=trade_rejected limit=5]
 /audit_types
-/balance [account=flex currency=USDC]
+/audit-types
+/balance [account=flex currency=USDC asset=USDC]
 /solde
 /pause
 /resume
@@ -107,14 +110,14 @@ Les targets `t1`/`t2`/`t3` sont optionnelles. Si elles sont presentes, leurs pou
 La syntaxe courte accepte les symboles sans suffixe, par exemple `LINK`, et les convertit par defaut en futures Kraken quote USD/USDC : `PF_LINKUSD`. Le montant reste obligatoire, par exemple `25USDC`, pour eviter qu'un ordre soit cree avec une taille implicite.
 
 `/status <trade_id>` affiche le statut du trade et les ordres attaches : entree, targets reduce-only, prix, montant, statut et identifiant externe dry-run si disponible.
-`/entry_filled <trade_id>` marque l'ordre d'entree comme rempli et passe les targets reduce-only en `ready_to_submit` sans envoyer d'ordre Kraken. La commande est idempotente : la relancer sur un trade deja marque filled ne cree pas de nouvel evenement d'audit.
-`/submit_targets <trade_id>` marque les targets `ready_to_submit` comme soumises en dry-run, avec ids externes locaux, sans envoyer d'ordre Kraken. La commande est idempotente apres soumission : un retry indique les targets deja soumises, conserve les ids existants et ne cree pas de nouvel evenement d'audit.
+`/entry_filled <trade_id>` ou `/entry-filled <trade_id>` marque l'ordre d'entree comme rempli et passe les targets reduce-only en `ready_to_submit` sans envoyer d'ordre Kraken. La commande est idempotente : la relancer sur un trade deja marque filled ne cree pas de nouvel evenement d'audit.
+`/submit_targets <trade_id>` ou `/submit-targets <trade_id>` marque les targets `ready_to_submit` comme soumises en dry-run, avec ids externes locaux, sans envoyer d'ordre Kraken. La commande est idempotente apres soumission : un retry indique les targets deja soumises, conserve les ids existants et ne cree pas de nouvel evenement d'audit.
 `/cancel <trade_id>` annule un trade et ses ordres encore planifies/prets a soumettre. La commande est idempotente : un retry sur un trade deja annule ne cree pas de nouvel evenement d'audit.
 `/orders <trade_id>` affiche seulement la liste des ordres attaches pour relire rapidement l'entree et les targets, avec filtres optionnels `status` et `role`.
-`/trades` affiche les derniers trades depuis Telegram, avec filtres optionnels `limit`, `offset`, `status` et `pair`.
-`/audit` affiche les derniers evenements d'audit, filtrables par `trade_id` et `event_type`, pour diagnostiquer les confirmations rejetees et les garde-fous.
-`/audit_types` affiche les types d'evenements d'audit disponibles avec leurs compteurs, pratique pour choisir un filtre `event_type`.
-`/balance` ou `/solde` interroge le endpoint Kraken Futures `/derivatives/api/v3/accounts` en lecture seule et affiche les soldes par compte/devise. Les filtres optionnels `account` et `currency` permettent de limiter la reponse, par exemple `/balance account=flex currency=USDC`. Cette commande exige des cles API Futures (`KRAKEN_API_KEY` et `KRAKEN_API_SECRET`), pas des cles Spot, et reste disponible en dry-run. Si Kraken renvoie `authenticationError`, verifier aussi que `KRAKEN_FUTURES_BASE_URL` correspond au compte des cles (`https://futures.kraken.com` pour live, `https://demo-futures.kraken.com` pour demo).
+`/trades` affiche les derniers trades depuis Telegram, avec filtres optionnels `limit`, `offset`, `status`, `pair` et `side`.
+`/audit` affiche les derniers evenements d'audit, filtrables par `trade_id` et `event_type`, pour diagnostiquer les confirmations rejetees et les garde-fous. Les alias `type=...` et `event=...` sont acceptes pour filtrer plus vite depuis Telegram.
+`/audit_types` ou `/audit-types` affiche les types d'evenements d'audit disponibles avec leurs compteurs, pratique pour choisir un filtre `event_type`.
+`/balance` ou `/solde` interroge le endpoint Kraken Futures `/derivatives/api/v3/accounts` en lecture seule et affiche les soldes par compte/devise. Les filtres optionnels `account` et `currency` permettent de limiter la reponse, par exemple `/balance account=flex currency=USDC`. Les alias `asset=...` et `devise=...` sont aussi acceptes pour filtrer la devise plus vite depuis Telegram. Cette commande exige des cles API Futures (`KRAKEN_API_KEY` et `KRAKEN_API_SECRET`), pas des cles Spot, et reste disponible en dry-run. Si Kraken renvoie `authenticationError`, verifier aussi que `KRAKEN_FUTURES_BASE_URL` correspond au compte des cles (`https://futures.kraken.com` pour live, `https://demo-futures.kraken.com` pour demo).
 
 ## Exemple
 
@@ -136,7 +139,7 @@ Consulter les ordres attaches et filtrer une vue operateur :
 
 ```bash
 curl "http://localhost:8000/trades?limit=20&offset=0"
-curl "http://localhost:8000/trades?status=pending_confirmation&pair=PF_XBTUSD"
+curl "http://localhost:8000/trades?status=pending_confirmation&pair=PF_XBTUSD&side=buy"
 curl http://localhost:8000/trades/<trade_id>/orders
 curl "http://localhost:8000/trades/<trade_id>/orders?status=planned"
 curl "http://localhost:8000/trades/<trade_id>/orders?status=dry_run_submitted&role=target_exit"
@@ -147,7 +150,7 @@ curl http://localhost:8000/balance
 curl "http://localhost:8000/balance?account=flex&currency=USDC"
 ```
 
-`GET /trades` retourne les trades les plus recents sous forme `{items,total,limit,offset}` avec filtres optionnels `status` et `pair`.
+`GET /trades` retourne les trades les plus recents sous forme `{items,total,limit,offset}` avec filtres optionnels `status`, `pair` et `side`.
 `GET /audit` retourne les evenements d'audit les plus recents sous forme `{items,total,limit,offset}` avec filtres optionnels `trade_id` et `event_type`.
 `GET /audit/event-types` retourne les compteurs par type d'evenement d'audit sous forme `{items,total}` pour aider les vues operateur.
 `GET /balance` retourne les soldes Kraken Futures lus via `/derivatives/api/v3/accounts`, avec filtres optionnels `account` et `currency`; il exige les cles Kraken mais reste strictement read-only et disponible en dry-run.

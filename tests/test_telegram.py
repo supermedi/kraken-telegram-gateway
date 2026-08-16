@@ -1,7 +1,7 @@
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from kraken_telegram_gateway.gateway.config import Settings
-from kraken_telegram_gateway.gateway.kraken import AccountBalance
+from kraken_telegram_gateway.gateway.kraken import AccountBalance, KrakenAccountError
 from kraken_telegram_gateway.gateway.models import (
     AuditEvent,
     OrderRole,
@@ -258,11 +258,31 @@ def test_balance_command_filters_account_and_currency(monkeypatch):
     assert reply == "Solde Kraken Futures:\n- flex USDC | balance=100"
 
 
+def test_balance_command_accepts_currency_aliases(monkeypatch):
+    def fake_fetch_account_balances(self):
+        return [
+            AccountBalance(account="flex", currency="USDC", balance=100),
+            AccountBalance(account="flex", currency="ETH", balance=2),
+        ]
+
+    monkeypatch.setattr(
+        "kraken_telegram_gateway.gateway.kraken.KrakenClient.fetch_account_balances",
+        fake_fetch_account_balances,
+    )
+
+    with make_session() as session:
+        asset_reply = dispatch_telegram_text("/balance asset=usdc", session, Settings())
+        devise_reply = dispatch_telegram_text("/solde devise=ETH", session, Settings())
+
+    assert asset_reply == "Solde Kraken Futures:\n- flex USDC | balance=100"
+    assert devise_reply == "Solde Kraken Futures:\n- flex ETH | balance=2"
+
+
 def test_balance_command_rejects_invalid_filter():
     with make_session() as session:
-        reply = dispatch_telegram_text("/balance asset=USDC", session, Settings())
+        reply = dispatch_telegram_text("/balance wallet=USDC", session, Settings())
 
-    assert reply == "Commande refusee: unsupported /balance argument: asset"
+    assert reply == "Commande refusee: unsupported /balance argument: wallet"
 
 
 def test_solde_alias_reports_missing_kraken_credentials():
@@ -270,6 +290,36 @@ def test_solde_alias_reports_missing_kraken_credentials():
         reply = dispatch_telegram_text("/solde", session, Settings())
 
     assert reply == "Commande refusee: Kraken API credentials are required for signed requests."
+
+
+def test_balance_command_includes_debug_detail_when_feature_flag_enabled(monkeypatch):
+    def fake_fetch_account_balances(self):
+        raise KrakenAccountError(
+            "Kraken balance request was not successful: authenticationError",
+            debug_detail=(
+                "kraken_result=error\n"
+                "kraken_error=authenticationError\n"
+                "method=GET\n"
+                "url=https://futures.kraken.com/derivatives/api/v3/accounts\n"
+                "signed_endpoint_path=/api/v3/accounts\n"
+                "nonce_sent=non"
+            ),
+        )
+
+    monkeypatch.setattr(
+        "kraken_telegram_gateway.gateway.kraken.KrakenClient.fetch_account_balances",
+        fake_fetch_account_balances,
+    )
+
+    with make_session() as session:
+        reply = dispatch_telegram_text("/balance", session, Settings(kraken_balance_debug_errors=True))
+
+    assert reply.startswith("Commande refusee: Kraken balance request was not successful: authenticationError")
+    assert "Debug Kraken balance:" in reply
+    assert "url=https://futures.kraken.com/derivatives/api/v3/accounts" in reply
+    assert "signed_endpoint_path=/api/v3/accounts" in reply
+    assert "APIKey" not in reply
+    assert "Authent" not in reply
 
 
 def test_orders_command_lists_attached_orders_only():
@@ -341,6 +391,23 @@ def test_entry_filled_command_marks_targets_ready_for_mobile_visibility():
     assert "- target_exit: sell limit 69000 | 60 USDC | target=60% | reduce-only=oui | statut=ready_to_submit" in ready_orders_reply
 
 
+def test_entry_filled_command_accepts_hyphen_alias():
+    settings = Settings(max_amount_usdc=100)
+    with make_session() as session:
+        preview_reply = dispatch_telegram_text(
+            "/trade pair=PF_XBTUSD side=buy amount_usdc=100 entry=limit:65000 t1=67000:100%",
+            session,
+            settings,
+        )
+        trade_id = next(line.split(": ", 1)[1] for line in preview_reply.splitlines() if line.startswith("Trade ID:"))
+        dispatch_telegram_text(f"/confirm {trade_id}", session, settings)
+
+        reply = dispatch_telegram_text(f"/entry-filled {trade_id}", session, settings)
+
+    assert "Entry marquee filled" in reply
+    assert "Statut: entry_filled" in reply
+
+
 def test_entry_filled_command_is_idempotent_for_mobile_retries():
     settings = Settings(max_amount_usdc=100)
     with make_session() as session:
@@ -394,6 +461,25 @@ def test_submit_targets_command_marks_ready_targets_dry_run_submitted():
     assert "- target_exit: sell limit 67000 | 40 USDC | target=40% | reduce-only=oui | statut=dry_run_submitted" in submitted_orders_reply
     assert "- target_exit: sell limit 69000 | 60 USDC | target=60% | reduce-only=oui | statut=dry_run_submitted" in submitted_orders_reply
     assert "Dry-run: 2 target(s)" in audit.message
+
+
+def test_submit_targets_command_accepts_hyphen_alias():
+    settings = Settings(max_amount_usdc=100)
+    with make_session() as session:
+        preview_reply = dispatch_telegram_text(
+            "/trade pair=PF_XBTUSD side=buy amount_usdc=100 entry=limit:65000 t1=67000:100%",
+            session,
+            settings,
+        )
+        trade_id = next(line.split(": ", 1)[1] for line in preview_reply.splitlines() if line.startswith("Trade ID:"))
+        dispatch_telegram_text(f"/confirm {trade_id}", session, settings)
+        dispatch_telegram_text(f"/entry-filled {trade_id}", session, settings)
+
+        reply = dispatch_telegram_text(f"/submit-targets {trade_id}", session, settings)
+
+    assert "1 target(s) reduce-only" in reply
+    assert "aucun ordre Kraken envoye" in reply
+    assert "Statut: entry_filled" in reply
 
 
 def test_submit_targets_command_retry_is_idempotent_for_mobile_operators():
@@ -549,7 +635,7 @@ def test_trades_command_lists_recent_trades_for_mobile_visibility():
     assert reply.index(second_trade_id) < reply.index(first_trade_id)
 
 
-def test_trades_command_filters_status_and_pair():
+def test_trades_command_filters_status_pair_and_side():
     settings = Settings(max_amount_usdc=100)
     with make_session() as session:
         xbt_preview = dispatch_telegram_text(
@@ -570,12 +656,19 @@ def test_trades_command_filters_status_and_pair():
         )
         dispatch_telegram_text(f"/cancel {xbt_trade_id}", session, settings)
 
-        reply = dispatch_telegram_text("/trades status=cancelled pair=pf_xbtusd", session, settings)
+        reply = dispatch_telegram_text("/trades status=cancelled pair=pf_xbtusd side=BUY", session, settings)
 
     assert reply.startswith("Trades recents 1-1/1:")
     assert xbt_trade_id in reply
     assert eth_trade_id not in reply
     assert "cancelled | BUY PF_XBTUSD" in reply
+
+
+def test_trades_command_rejects_invalid_side():
+    with make_session() as session:
+        reply = dispatch_telegram_text("/trades side=long", session, Settings(max_amount_usdc=100))
+
+    assert reply == "Commande refusee: /trades side must be buy or sell"
 
 
 def test_trades_command_rejects_invalid_limit():
@@ -602,6 +695,39 @@ def test_audit_command_lists_and_filters_safety_events():
     assert f"- trade_rejected | trade={trade_id}" in reply
     assert "stop loss requis" in reply
     assert "trade_preview" not in reply
+
+
+def test_audit_command_accepts_short_event_type_filter_aliases():
+    settings = Settings(max_amount_usdc=100, require_stop_loss_for_confirmation=True)
+    with make_session() as session:
+        rejected_preview = dispatch_telegram_text(
+            "/trade pair=PF_XBTUSD side=buy amount_usdc=100 entry=limit:65000 t1=67000:100%",
+            session,
+            settings,
+        )
+        rejected_trade_id = next(
+            line.split(": ", 1)[1] for line in rejected_preview.splitlines() if line.startswith("Trade ID:")
+        )
+        dispatch_telegram_text(f"/confirm {rejected_trade_id}", session, settings)
+        cancelled_preview = dispatch_telegram_text(
+            "/trade pair=PF_ETHUSD side=sell amount_usdc=50 entry=limit:3500 t1=3300:100% stop=3600",
+            session,
+            settings,
+        )
+        cancelled_trade_id = next(
+            line.split(": ", 1)[1] for line in cancelled_preview.splitlines() if line.startswith("Trade ID:")
+        )
+        dispatch_telegram_text(f"/cancel {cancelled_trade_id}", session, settings)
+
+        type_reply = dispatch_telegram_text("/audit type=trade_rejected", session, settings)
+        event_reply = dispatch_telegram_text("/audit event=trade_cancelled", session, settings)
+
+    assert type_reply.startswith("Audit 1-1/1:")
+    assert "trade_rejected" in type_reply
+    assert "trade_cancelled" not in type_reply
+    assert event_reply.startswith("Audit 1-1/1:")
+    assert "trade_cancelled" in event_reply
+    assert "trade_rejected" not in event_reply
 
 
 def test_audit_command_rejects_invalid_limit():
@@ -640,6 +766,24 @@ def test_audit_types_command_lists_event_type_counts():
     assert "- trade_preview: 2" in reply
     assert "- trade_cancelled: 1" in reply
     assert "- trade_rejected: 1" in reply
+
+
+def test_audit_types_command_accepts_hyphen_alias():
+    settings = Settings(max_amount_usdc=100)
+    with make_session() as session:
+        preview_reply = dispatch_telegram_text(
+            "/trade pair=PF_XBTUSD side=buy amount_usdc=100 entry=limit:65000 t1=67000:100%",
+            session,
+            settings,
+        )
+        trade_id = next(line.split(": ", 1)[1] for line in preview_reply.splitlines() if line.startswith("Trade ID:"))
+        dispatch_telegram_text(f"/cancel {trade_id}", session, settings)
+
+        reply = dispatch_telegram_text("/audit-types", session, settings)
+
+    assert reply.startswith("Types audit (2):")
+    assert "- trade_cancelled: 1" in reply
+    assert "- trade_preview: 1" in reply
 
 
 def test_allowed_user_ids_are_enforced():

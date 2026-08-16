@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     kraken_api_secret: str | None = None
     kraken_futures_base_url: str = "https://futures.kraken.com"
     kraken_instrument_metadata_path: str | None = None
+    kraken_balance_debug_errors: bool = False
 
     @property
     def allowed_pair_set(self) -> set[str]:
