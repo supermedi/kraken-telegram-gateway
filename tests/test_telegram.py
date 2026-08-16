@@ -71,6 +71,38 @@ def test_trade_preview_creates_entry_and_reduce_only_target_orders():
     assert all(order.status == OrderStatus.PLANNED for order in orders)
 
 
+def test_trade_preview_allows_entry_without_targets():
+    with make_session() as session:
+        preview_reply = dispatch_telegram_text(
+            "/trade pair=PF_XBTUSD side=buy amount_usdc=100 entry=limit:65000 stop=63000",
+            session,
+            Settings(max_amount_usdc=100),
+        )
+        trade_id = next(line.split(": ", 1)[1] for line in preview_reply.splitlines() if line.startswith("Trade ID:"))
+        orders = session.exec(select(TradeOrder).where(TradeOrder.trade_id == trade_id)).all()
+
+    assert "targets=aucune" in preview_reply
+    assert len(orders) == 1
+    assert orders[0].role == OrderRole.ENTRY
+    assert orders[0].reduce_only is False
+
+
+def test_compact_trade_message_defaults_pair_to_usd_futures():
+    with make_session() as session:
+        preview_reply = dispatch_telegram_text(
+            "LINK LONG 25USDC 2x Entry 9.356 Sl 9.298",
+            session,
+            Settings(max_amount_usdc=100, max_leverage=2, allowed_pairs="*"),
+        )
+
+    assert "BUY PF_LINKUSD" in preview_reply
+    assert "montant=25 USDC" in preview_reply
+    assert "entry=limit:9.356" in preview_reply
+    assert "targets=aucune" in preview_reply
+    assert "stop=9.298" in preview_reply
+    assert "leverage=2x" in preview_reply
+
+
 def test_confirm_marks_only_entry_order_as_dry_run_submitted():
     with make_session() as session:
         preview_reply = dispatch_telegram_text(
@@ -354,6 +386,49 @@ def test_submit_targets_command_rejects_before_entry_fill():
 
     assert "l'entree doit etre marquee filled" in reply
     assert "Statut: dry_run_executed" in reply
+
+
+def test_submit_targets_command_handles_trade_without_targets():
+    settings = Settings(max_amount_usdc=100)
+    with make_session() as session:
+        preview_reply = dispatch_telegram_text(
+            "/trade pair=PF_XBTUSD side=buy amount_usdc=100 entry=limit:65000 stop=63000",
+            session,
+            settings,
+        )
+        trade_id = next(line.split(": ", 1)[1] for line in preview_reply.splitlines() if line.startswith("Trade ID:"))
+        dispatch_telegram_text(f"/confirm {trade_id}", session, settings)
+        filled_reply = dispatch_telegram_text(f"/entry_filled {trade_id}", session, settings)
+
+        submit_reply = dispatch_telegram_text(f"/submit_targets {trade_id}", session, settings)
+
+    assert "Aucune target definie" in filled_reply
+    assert "Aucune target reduce-only prete a soumettre" in submit_reply
+    assert "Statut: entry_filled" in submit_reply
+
+
+def test_cancel_command_retry_is_idempotent_for_mobile_operators():
+    settings = Settings(max_amount_usdc=100)
+    with make_session() as session:
+        preview_reply = dispatch_telegram_text(
+            "/trade pair=PF_XBTUSD side=sell amount_usdc=100 entry=limit:65000 t1=63000:100%",
+            session,
+            settings,
+        )
+        trade_id = next(line.split(": ", 1)[1] for line in preview_reply.splitlines() if line.startswith("Trade ID:"))
+        dispatch_telegram_text(f"/cancel {trade_id}", session, settings)
+
+        retry_reply = dispatch_telegram_text(f"/cancel {trade_id}", session, settings)
+        orders = session.exec(select(TradeOrder).where(TradeOrder.trade_id == trade_id)).all()
+        audits = session.exec(
+            select(AuditEvent).where(AuditEvent.trade_id == trade_id, AuditEvent.event_type == "trade_cancelled")
+        ).all()
+
+    assert "Trade deja annule" in retry_reply
+    assert "Aucun changement applique" in retry_reply
+    assert "Statut: cancelled" in retry_reply
+    assert {order.status for order in orders} == {OrderStatus.CANCELLED}
+    assert len(audits) == 1
 
 
 def test_entry_filled_command_rejects_unconfirmed_trade():

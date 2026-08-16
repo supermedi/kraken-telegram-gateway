@@ -73,7 +73,7 @@ def dispatch_telegram_text(text: str, session: Session, settings: Settings) -> s
     argument = argument.strip()
 
     try:
-        if command == "/trade":
+        if command == "/trade" or not command.startswith("/"):
             preview = create_trade_preview(text, session, settings)
             lines = [
                 "Preview creee.",
@@ -150,7 +150,8 @@ def dispatch_telegram_text(text: str, session: Session, settings: Settings) -> s
                 "/audit [trade_id] [event_type=... limit=5], "
                 "/pause, /resume.\n"
                 "Exemple: /trade pair=PF_XBTUSD side=buy amount_usdc=100 entry=limit:65000 "
-                "t1=67000:40% t2=69000:40% t3=72000:20%"
+                "t1=67000:40% t2=69000:40% t3=72000:20%\n"
+                "Exemple court: LINK LONG 25USDC 2x Entry 9.356 Sl 9.298"
             )
     except (CommandParseError, RiskValidationError, ValueError) as exc:
         return f"Commande refusee: {exc}"

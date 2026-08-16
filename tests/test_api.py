@@ -241,6 +241,25 @@ def test_submit_targets_api_rejects_before_entry_is_filled():
     assert {order["status"] for order in orders_response.json()} == {"dry_run_submitted", "planned"}
 
 
+def test_cancel_api_retry_is_idempotent():
+    with api_client() as client:
+        preview_response = create_preview(client)
+        trade_id = preview_response.json()["trade_id"]
+        first_response = client.post(f"/commands/cancel/{trade_id}")
+
+        retry_response = client.post(f"/commands/cancel/{trade_id}")
+        orders_response = client.get(f"/trades/{trade_id}/orders")
+        audit_response = client.get("/audit", params={"trade_id": trade_id, "event_type": "trade_cancelled"})
+
+    assert first_response.status_code == 200
+    assert first_response.json()["status"] == "cancelled"
+    assert retry_response.status_code == 200
+    assert retry_response.json()["status"] == "cancelled"
+    assert "Aucun changement applique" in retry_response.json()["message"]
+    assert {order["status"] for order in orders_response.json()} == {"cancelled"}
+    assert audit_response.json()["total"] == 1
+
+
 def test_confirm_api_rejects_missing_stop_when_required():
     settings = Settings(max_amount_usdc=100, require_stop_loss_for_confirmation=True)
     with api_client(settings) as client:

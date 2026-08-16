@@ -14,7 +14,7 @@ class TradeIntent(BaseModel):
     amount_usdc: float = Field(gt=0)
     entry_type: str
     entry_price: float = Field(gt=0)
-    targets: list[Target] = Field(min_length=1, max_length=3)
+    targets: list[Target] = Field(default_factory=list, max_length=3)
     stop_price: float | None = Field(default=None, gt=0)
     leverage: int = Field(default=1, ge=1)
 
@@ -41,6 +41,8 @@ class TradeIntent(BaseModel):
 
     @model_validator(mode="after")
     def validate_target_percentages(self) -> "TradeIntent":
+        if not self.targets:
+            return self
         total = sum(target.percent for target in self.targets)
         if abs(total - 100) > 0.0001:
             raise ValueError("target percentages must total 100%")

@@ -85,6 +85,12 @@ def cancel_trade(trade_id: str, session: Session) -> ConfirmResult:
     trade = session.get(Trade, trade_id)
     if trade is None:
         return ConfirmResult(trade_id=trade_id, status="not_found", message="Trade introuvable.")
+    if trade.status == TradeStatus.CANCELLED:
+        return ConfirmResult(
+            trade_id=trade.id,
+            status=trade.status,
+            message="Trade deja annule. Aucun changement applique.",
+        )
     trade.status = TradeStatus.CANCELLED
     trade.updated_at = utc_now()
     session.add(trade)
@@ -138,7 +144,11 @@ def mark_entry_filled(trade_id: str, session: Session) -> ConfirmResult:
     trade.status = TradeStatus.ENTRY_FILLED
     trade.updated_at = utc_now()
     session.add(trade)
-    message = "Entry marquee filled. Targets reduce-only pretes a soumettre; aucun ordre Kraken envoye."
+    message = (
+        "Entry marquee filled. Targets reduce-only pretes a soumettre; aucun ordre Kraken envoye."
+        if planned_targets
+        else "Entry marquee filled. Aucune target definie; aucun ordre Kraken envoye."
+    )
     session.add(AuditEvent(trade_id=trade.id, event_type="entry_filled", message=message))
     session.commit()
     return ConfirmResult(trade_id=trade.id, status=trade.status, message=message)
@@ -297,7 +307,7 @@ def format_trade_summary(trade: Trade) -> str:
     targets = ", ".join(
         f"{target['price']:g}:{target['percent']:g}%"
         for target in json.loads(trade.targets_json)
-    )
+    ) or "aucune"
     stop = f"{trade.stop_price:g}" if trade.stop_price else "aucun"
     return (
         f"{trade.side.upper()} {trade.pair} | montant={trade.amount_usdc:g} USDC | "

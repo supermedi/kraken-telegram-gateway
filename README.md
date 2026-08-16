@@ -86,6 +86,7 @@ Commandes Telegram supportees :
 
 ```text
 /trade pair=PF_XBTUSD side=buy amount_usdc=100 entry=limit:65000 t1=67000:40% t2=69000:40% t3=72000:20%
+/trade LINK LONG 25USDC 2x Entry 9.356 Sl 9.298
 /confirm <trade_id>
 /entry_filled <trade_id>
 /submit_targets <trade_id>
@@ -98,9 +99,14 @@ Commandes Telegram supportees :
 /resume
 ```
 
+Les targets `t1`/`t2`/`t3` sont optionnelles. Si elles sont presentes, leurs pourcentages doivent totaliser 100%. Si elles sont absentes, le bot planifie seulement l'ordre d'entree et `/submit_targets` n'aura aucune target reduce-only a soumettre.
+
+La syntaxe courte accepte les symboles sans suffixe, par exemple `LINK`, et les convertit par defaut en futures Kraken quote USD/USDC : `PF_LINKUSD`. Le montant reste obligatoire, par exemple `25USDC`, pour eviter qu'un ordre soit cree avec une taille implicite.
+
 `/status <trade_id>` affiche le statut du trade et les ordres attaches : entree, targets reduce-only, prix, montant, statut et identifiant externe dry-run si disponible.
 `/entry_filled <trade_id>` marque l'ordre d'entree comme rempli et passe les targets reduce-only en `ready_to_submit` sans envoyer d'ordre Kraken. La commande est idempotente : la relancer sur un trade deja marque filled ne cree pas de nouvel evenement d'audit.
 `/submit_targets <trade_id>` marque les targets `ready_to_submit` comme soumises en dry-run, avec ids externes locaux, sans envoyer d'ordre Kraken. La commande est idempotente apres soumission : un retry indique les targets deja soumises, conserve les ids existants et ne cree pas de nouvel evenement d'audit.
+`/cancel <trade_id>` annule un trade et ses ordres encore planifies/prets a soumettre. La commande est idempotente : un retry sur un trade deja annule ne cree pas de nouvel evenement d'audit.
 `/orders <trade_id>` affiche seulement la liste des ordres attaches pour relire rapidement l'entree et les targets, avec filtres optionnels `status` et `role`.
 `/trades` affiche les derniers trades depuis Telegram, avec filtres optionnels `limit`, `offset`, `status` et `pair`.
 `/audit` affiche les derniers evenements d'audit, filtrables par `trade_id` et `event_type`, pour diagnostiquer les confirmations rejetees et les garde-fous.

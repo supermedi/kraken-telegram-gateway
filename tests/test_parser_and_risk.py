@@ -36,6 +36,33 @@ def test_targets_must_total_100_percent():
         )
 
 
+def test_targets_can_be_omitted():
+    intent = parse_trade_command(
+        "/trade pair=PF_XBTUSD side=buy amount_usdc=100 entry=limit:65000 stop=63000"
+    )
+
+    assert intent.targets == []
+    assert validate_risk(intent, Settings(max_amount_usdc=100, max_leverage=2)) is None
+
+
+def test_compact_trade_syntax_defaults_short_pair_to_usd_futures():
+    intent = parse_trade_command("LINK LONG 25USDC 10x Entry 9.356 Sl 9.298")
+
+    assert intent.pair == "PF_LINKUSD"
+    assert intent.side == "buy"
+    assert intent.amount_usdc == 25
+    assert intent.entry_type == "limit"
+    assert intent.entry_price == 9.356
+    assert intent.stop_price == 9.298
+    assert intent.leverage == 10
+    assert intent.targets == []
+
+
+def test_compact_trade_syntax_still_requires_amount():
+    with pytest.raises(ValueError, match="missing required fields: amount_usdc"):
+        parse_trade_command("LINK LONG 10x Entry 9.356 Sl 9.298")
+
+
 def test_amount_cap_is_enforced():
     intent = parse_trade_command(
         "/trade pair=PF_XBTUSD side=buy amount_usdc=101 entry=limit:65000 "
