@@ -611,6 +611,37 @@ def test_audit_command_rejects_invalid_limit():
     assert reply == "Commande refusee: /audit limit must be between 1 and 10"
 
 
+def test_audit_types_command_lists_event_type_counts():
+    settings = Settings(max_amount_usdc=100, require_stop_loss_for_confirmation=True)
+    with make_session() as session:
+        rejected_preview = dispatch_telegram_text(
+            "/trade pair=PF_XBTUSD side=buy amount_usdc=100 entry=limit:65000 t1=67000:100%",
+            session,
+            settings,
+        )
+        rejected_trade_id = next(
+            line.split(": ", 1)[1] for line in rejected_preview.splitlines() if line.startswith("Trade ID:")
+        )
+        dispatch_telegram_text(f"/confirm {rejected_trade_id}", session, settings)
+
+        cancelled_preview = dispatch_telegram_text(
+            "/trade pair=PF_ETHUSD side=sell amount_usdc=50 entry=limit:3500 t1=3300:100% stop=3600",
+            session,
+            settings,
+        )
+        cancelled_trade_id = next(
+            line.split(": ", 1)[1] for line in cancelled_preview.splitlines() if line.startswith("Trade ID:")
+        )
+        dispatch_telegram_text(f"/cancel {cancelled_trade_id}", session, settings)
+
+        reply = dispatch_telegram_text("/audit_types", session, settings)
+
+    assert reply.startswith("Types audit (3):")
+    assert "- trade_preview: 2" in reply
+    assert "- trade_cancelled: 1" in reply
+    assert "- trade_rejected: 1" in reply
+
+
 def test_allowed_user_ids_are_enforced():
     update = {
         "message": {

@@ -13,6 +13,7 @@ from kraken_telegram_gateway.gateway.models import OrderRole, OrderStatus, Trade
 from kraken_telegram_gateway.gateway.schemas import (
     AccountBalanceResponse,
     AuditEventList,
+    AuditEventTypeList,
     ConfirmResult,
     TradeDetail,
     TradeList,
@@ -25,6 +26,7 @@ from kraken_telegram_gateway.gateway.service import (
     get_account_balances,
     get_trade_detail,
     get_trade_orders,
+    list_audit_event_types,
     list_audit_events,
     list_trades,
     mark_entry_filled,
@@ -134,6 +136,11 @@ def get_audit_event_list(
         limit=limit,
         offset=offset,
     )
+
+
+@app.get("/audit/event-types", response_model=AuditEventTypeList)
+def get_audit_event_type_list(session: Session = Depends(get_session)) -> AuditEventTypeList:
+    return list_audit_event_types(session)
 
 
 @app.get("/trades/{trade_id}", response_model=TradeDetail)

@@ -17,7 +17,15 @@ from kraken_telegram_gateway.gateway.models import (
 )
 from kraken_telegram_gateway.gateway.parser import parse_trade_command
 from kraken_telegram_gateway.gateway.risk import validate_risk
-from kraken_telegram_gateway.gateway.schemas import AuditEventList, ConfirmResult, TradeDetail, TradeList, TradePreview
+from kraken_telegram_gateway.gateway.schemas import (
+    AuditEventList,
+    AuditEventTypeList,
+    AuditEventTypeSummary,
+    ConfirmResult,
+    TradeDetail,
+    TradeList,
+    TradePreview,
+)
 
 
 def create_trade_preview(text: str, session: Session, settings: Settings) -> TradePreview:
@@ -303,6 +311,22 @@ def list_audit_events(
     return AuditEventList(items=list(events), total=total, limit=limit, offset=offset)
 
 
+def list_audit_event_types(session: Session) -> AuditEventTypeList:
+    count_expr = func.count(AuditEvent.id)
+    latest_expr = func.max(AuditEvent.created_at)
+    statement = (
+        select(AuditEvent.event_type, count_expr, latest_expr)
+        .group_by(AuditEvent.event_type)
+        .order_by(count_expr.desc(), AuditEvent.event_type.asc())
+    )
+    rows = session.exec(statement).all()
+    items = [
+        AuditEventTypeSummary(event_type=event_type, count=count, latest_at=latest_at)
+        for event_type, count, latest_at in rows
+    ]
+    return AuditEventTypeList(items=items, total=len(items))
+
+
 def get_account_balances(
     settings: Settings,
     *,
@@ -381,6 +405,16 @@ def format_audit_events(events: AuditEventList) -> str:
     for event in events.items:
         trade = f" | trade={event.trade_id}" if event.trade_id else ""
         lines.append(f"- {event.event_type}{trade} | {event.message}")
+    return "\n".join(lines)
+
+
+def format_audit_event_types(event_types: AuditEventTypeList) -> str:
+    if not event_types.items:
+        return "Aucun type d'evenement d'audit trouve."
+
+    lines = [f"Types audit ({event_types.total}):"]
+    for item in event_types.items:
+        lines.append(f"- {item.event_type}: {item.count}")
     return "\n".join(lines)
 
 

@@ -1,4 +1,5 @@
 from decimal import Decimal
+from datetime import datetime
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -81,6 +82,17 @@ class AuditEventList(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+class AuditEventTypeSummary(BaseModel):
+    event_type: str
+    count: int
+    latest_at: datetime
+
+
+class AuditEventTypeList(BaseModel):
+    items: list[AuditEventTypeSummary]
+    total: int
 
 
 class AccountBalanceResponse(BaseModel):

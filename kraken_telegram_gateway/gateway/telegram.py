@@ -14,6 +14,7 @@ from kraken_telegram_gateway.gateway.service import (
     create_trade_preview,
     format_audit_events,
     format_account_balances,
+    format_audit_event_types,
     format_trade_list,
     format_trade_orders,
     format_trade_status,
@@ -21,6 +22,7 @@ from kraken_telegram_gateway.gateway.service import (
     get_trade_detail,
     is_trading_paused,
     list_audit_events,
+    list_audit_event_types,
     list_trades,
     mark_entry_filled,
     pause_trading,
@@ -137,6 +139,11 @@ def dispatch_telegram_text(text: str, session: Session, settings: Settings) -> s
             events = list_audit_events(session, **filters)
             return format_audit_events(events)
 
+        if command == "/audit_types":
+            if argument:
+                raise ValueError("/audit_types does not accept arguments")
+            return format_audit_event_types(list_audit_event_types(session))
+
         if command in {"/balance", "/solde"}:
             filters = _parse_balance_filters(argument)
             balances = get_account_balances(settings, **filters)
@@ -155,7 +162,7 @@ def dispatch_telegram_text(text: str, session: Session, settings: Settings) -> s
                 "/cancel <trade_id>, "
                 "/status [trade_id], /orders <trade_id> [status=... role=...], "
                 "/trades [limit=5 status=... pair=...], "
-                "/audit [trade_id] [event_type=... limit=5], "
+                "/audit [trade_id] [event_type=... limit=5], /audit_types, "
                 "/balance [account=... currency=...], /pause, /resume.\n"
                 "Exemple: /trade pair=PF_XBTUSD side=buy amount_usdc=100 entry=limit:65000 "
                 "t1=67000:40% t2=69000:40% t3=72000:20%\n"

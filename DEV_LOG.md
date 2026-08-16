@@ -15,13 +15,13 @@ The hourly isolated cron must use this file as the handoff point between runs:
 - Project: Kraken Futures <-> Telegram trading gateway.
 - Runtime: Python/FastAPI with SQLite persistence.
 - Safety mode: dry-run only by default; live Kraken execution is not approved.
-- Telegram: webhook endpoint, command dispatcher, user allowlist, webhook secret, pause/resume, retry idempotency, `/balance`/`/solde` read-only Kraken Futures account balance lookup with `account`/`currency` filters, idempotent `/cancel <trade_id>`, `/status <trade_id>` trade visibility, `/orders <trade_id>` compact order visibility with `status`/`role` filters, `/trades` recent-list visibility with filters, `/audit` safety-event diagnostics, idempotent `/entry_filled <trade_id>` local lifecycle tracking, and idempotent `/submit_targets <trade_id>` dry-run target submission are implemented.
+- Telegram: webhook endpoint, command dispatcher, user allowlist, webhook secret, pause/resume, retry idempotency, `/balance`/`/solde` read-only Kraken Futures account balance lookup with `account`/`currency` filters, idempotent `/cancel <trade_id>`, `/status <trade_id>` trade visibility, `/orders <trade_id>` compact order visibility with `status`/`role` filters, `/trades` recent-list visibility with filters, `/audit` safety-event diagnostics, `/audit_types` event-type counters, idempotent `/entry_filled <trade_id>` local lifecycle tracking, and idempotent `/submit_targets <trade_id>` dry-run target submission are implemented.
 - Risk policy: stop loss is optional by default with a warning; `REQUIRE_STOP_LOSS_FOR_CONFIRMATION=true` rejects confirmation of no-stop trades without touching planned orders or Kraken.
-- Trading model: trade previews are persisted with planned entry orders and reduce-only target exit orders; repeated cancellation retries are no-ops that avoid duplicate audit events; confirmed entries can be marked `filled`, which moves target exits to `ready_to_submit`; ready targets can then be marked `dry_run_submitted` with local external ids and no Kraken network submission; repeated target submission retries are no-ops that preserve existing ids and avoid duplicate audit events; `/trades` lists recent trades with `limit`, `offset`, `status`, and `pair` filters; `/trades/{trade_id}` returns the trade plus attached orders; `/trades/{trade_id}/orders` returns attached orders with optional `status` and `role` filters; `/audit` lists recent audit events with `trade_id` and `event_type` filters.
+- Trading model: trade previews are persisted with planned entry orders and reduce-only target exit orders; repeated cancellation retries are no-ops that avoid duplicate audit events; confirmed entries can be marked `filled`, which moves target exits to `ready_to_submit`; ready targets can then be marked `dry_run_submitted` with local external ids and no Kraken network submission; repeated target submission retries are no-ops that preserve existing ids and avoid duplicate audit events; `/trades` lists recent trades with `limit`, `offset`, `status`, and `pair` filters; `/trades/{trade_id}` returns the trade plus attached orders; `/trades/{trade_id}/orders` returns attached orders with optional `status` and `role` filters; `/audit` lists recent audit events with `trade_id` and `event_type` filters; `/audit/event-types` returns local audit event-type counters.
 - Kraken Futures: authenticated REST signing, private request preparation, read-only `/derivatives/api/v3/accounts` balance lookup exposed through Telegram `/balance`/`/solde` and API `GET /balance` with optional filters, a local instrument metadata cache, a metadata cache validator CLI, and safe entry/target limit-order payload boundaries are implemented; live order network submission remains intentionally blocked even when metadata is available.
 - Deployment: Dockerfile, Docker Compose, GHCR publish workflow, final public image name `ghcr.io/supermedi/kraken-telegram-gateway:latest`, and deployment documentation are in place; runtime secrets stay in local `.env`.
 - GitHub: dedicated public repository created and initial code pushed to `https://github.com/supermedi/kraken-telegram-gateway`.
-- Verification baseline: `python3 -m pytest -q` was last reported passing with 81 tests on 2026-08-16.
+- Verification baseline: `python3 -m pytest -q` was last reported passing with 83 tests on 2026-08-16.
 
 ## Guardrails
 
@@ -38,9 +38,21 @@ The hourly isolated cron must use this file as the handoff point between runs:
 2. Feed the instrument metadata validator with an operator-reviewed Kraken Futures cache, then mount it via `KRAKEN_INSTRUMENT_METADATA_PATH` in VPS dry-run.
 3. Add Kraken account-event polling/webhook abstraction for real entry fill detection only after live integration is explicitly approved.
 4. Harden target-submission retry diagnostics further only if mixed blocked/submitted live-integration states need clearer operator feedback.
-5. Extend audit/balance diagnostics only if operators need event-type shortcuts, retention/export, balance freshness, or richer webhook failure visibility.
+5. Extend audit/balance diagnostics only if operators need retention/export, balance freshness, or richer webhook failure visibility.
 
 ## Cycle Log
+
+### 2026-08-16 17:49 UTC - Audit Event-Type Counters
+
+- Chose Next Queue item 5: event-type shortcuts for operator audit diagnostics, because Docker/VPS validation and operator-reviewed metadata still require external environment/input.
+- Added API `GET /audit/event-types`, returning `{items,total}` with audit `event_type`, count, and latest timestamp, sorted by most common type then name.
+- Added Telegram `/audit_types` to show compact event-type counters so mobile operators can choose valid `/audit event_type=...` filters.
+- Documented the new API and Telegram command in `README.md`.
+- Kept Kraken safety guardrails unchanged: no Kraken order path, live-trading flag, dry-run default, secrets, or network submission behavior was changed.
+
+Files changed: `kraken_telegram_gateway/gateway/app.py`, `kraken_telegram_gateway/gateway/service.py`, `kraken_telegram_gateway/gateway/telegram.py`, `kraken_telegram_gateway/gateway/schemas.py`, `tests/test_api.py`, `tests/test_telegram.py`, `README.md`, `DEV_LOG.md`.
+
+Tests: `python3 -m pytest tests/test_api.py::test_audit_event_types_api_returns_counts_for_operator_filters -q` -> 1 passed, 1 Starlette/TestClient deprecation warning. `python3 -m pytest tests/test_telegram.py::test_audit_types_command_lists_event_type_counts -q` -> 1 passed. `python3 -m compileall -q kraken_telegram_gateway` -> OK. `python3 -m pytest -q` -> 83 passed, 1 Starlette/TestClient deprecation warning.
 
 ### 2026-08-16 16:44 UTC - Final GHCR Image Name
 

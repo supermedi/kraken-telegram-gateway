@@ -389,6 +389,34 @@ def test_audit_api_returns_recent_events_with_filters_and_pagination():
     assert [event["event_type"] for event in page_response.json()["items"]] == ["trade_preview"]
 
 
+def test_audit_event_types_api_returns_counts_for_operator_filters():
+    settings = Settings(max_amount_usdc=100, require_stop_loss_for_confirmation=True)
+    with api_client(settings) as client:
+        rejected_trade = create_preview(
+            client,
+            "/trade pair=PF_XBTUSD side=buy amount_usdc=100 entry=limit:65000 t1=67000:100%",
+        ).json()["trade_id"]
+        client.post(f"/commands/confirm/{rejected_trade}")
+
+        cancelled_trade = create_preview(
+            client,
+            "/trade pair=PF_ETHUSD side=sell amount_usdc=50 entry=limit:3500 t1=3300:100% stop=3600",
+        ).json()["trade_id"]
+        client.post(f"/commands/cancel/{cancelled_trade}")
+
+        response = client.get("/audit/event-types")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total"] == 3
+    assert [(item["event_type"], item["count"]) for item in payload["items"]] == [
+        ("trade_preview", 2),
+        ("trade_cancelled", 1),
+        ("trade_rejected", 1),
+    ]
+    assert all(item["latest_at"] for item in payload["items"])
+
+
 def test_trade_list_api_returns_recent_trades_with_filters_and_pagination():
     with api_client() as client:
         first = create_preview(
