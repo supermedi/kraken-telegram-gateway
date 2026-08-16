@@ -16,7 +16,7 @@ The hourly isolated cron must use this file as the handoff point between runs:
 - Project: Kraken Futures <-> Telegram trading gateway.
 - Runtime: Python/FastAPI with SQLite persistence.
 - Safety mode: dry-run only by default; live Kraken execution is not approved.
-- Telegram: webhook endpoint, command dispatcher, user allowlist, webhook secret, pause/resume, retry idempotency, `/balance`/`/solde` read-only Kraken Futures account balance lookup with `account`/`currency` plus `asset`/`devise` currency aliases, idempotent `/cancel <trade_id>`, `/status <trade_id>` trade visibility, `/orders <trade_id>` compact order visibility with case-insensitive `status`/`role` filters, `/trades` recent-list visibility with `limit`/`offset`/case-insensitive `status`/`pair`/`side` filters, `/audit` safety-event diagnostics with case-insensitive `event_type`/`type`/`event` filters, `/audit_types` and `/audit-types` event-type counters, idempotent `/entry_filled <trade_id>`/`/entry-filled <trade_id>` local lifecycle tracking, and idempotent `/submit_targets <trade_id>`/`/submit-targets <trade_id>` dry-run target submission are implemented.
+- Telegram: webhook endpoint, command dispatcher, user allowlist, webhook secret, pause/resume, retry idempotency, trade previews with copyable `bash` action blocks, `/balance`/`/solde` read-only Kraken Futures account balance lookup with `account`/`currency` plus `asset`/`devise` currency aliases, idempotent `/cancel <trade_id>`, `/status <trade_id>` trade visibility, `/orders <trade_id>` compact order visibility with case-insensitive `status`/`role` filters, `/trades` recent-list visibility with `limit`/`offset`/case-insensitive `status`/`pair`/`side` filters, `/audit` safety-event diagnostics with case-insensitive `event_type`/`type`/`event` filters, `/audit_types` and `/audit-types` event-type counters, idempotent `/entry_filled <trade_id>`/`/entry-filled <trade_id>` local lifecycle tracking, and idempotent `/submit_targets <trade_id>`/`/submit-targets <trade_id>` dry-run target submission are implemented.
 - Risk policy: stop loss is optional by default with a warning; `REQUIRE_STOP_LOSS_FOR_CONFIRMATION=true` rejects confirmation of no-stop trades without touching planned orders or Kraken.
 - Trading model: trade previews are persisted with planned entry orders and reduce-only target exit orders; repeated cancellation retries are no-ops that avoid duplicate audit events; confirmed entries can be marked `filled`, which moves target exits to `ready_to_submit`; ready targets can then be marked `dry_run_submitted` with local external ids and no Kraken network submission; repeated target submission retries are no-ops that preserve existing ids and avoid duplicate audit events; `/trades` lists recent trades with `limit`, `offset`, `status`, `pair`, and `side` filters; `/trades/{trade_id}` returns the trade plus attached orders; `/trades/{trade_id}/orders` returns attached orders with optional `status` and `role` filters; `/audit` lists recent audit events with `trade_id` and `event_type` filters; `/audit/event-types` returns local audit event-type counters.
 - Kraken Futures: authenticated REST signing, private request preparation, read-only `/derivatives/api/v3/accounts` balance lookup exposed through Telegram `/balance`/`/solde` and API `GET /balance` with optional filters, a local-first/public-fallback instrument metadata provider, a metadata cache validator CLI, and safe entry/target limit-order payload boundaries are implemented; live order network submission remains intentionally blocked even when metadata is available.
@@ -45,6 +45,16 @@ The hourly isolated cron must use this file as the handoff point between runs:
 5. Extend audit/balance/Telegram diagnostics only if operators need retention/export, balance freshness, richer webhook failure visibility, or additional mobile command ergonomics.
 
 ## Cycle Log
+
+### 2026-08-16 23:24 UTC - Copyable Trade Actions
+
+- Added a `bash` code block to Telegram trade previews with ready-to-copy `/confirm <trade_id>` and `/cancel <trade_id>` commands.
+- Kept the existing plain confirm/cancel hint lines for readability and compatibility.
+- Documented the mobile copy helper in `README.md`.
+
+Files changed: `kraken_telegram_gateway/gateway/telegram.py`, `tests/test_telegram.py`, `README.md`, `DEV_LOG.md`.
+
+Tests: `python3 -m pytest tests/test_telegram.py::test_trade_message_creates_preview_and_confirm_hint -q` -> 1 passed. `python3 -m compileall -q kraken_telegram_gateway` -> OK. `python3 -m pytest -q` -> 94 passed, 1 Starlette/TestClient deprecation warning.
 
 ### 2026-08-16 23:18 UTC - Public Instrument Metadata Fallback
 

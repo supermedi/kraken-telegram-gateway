@@ -110,6 +110,7 @@ Les targets `t1`/`t2`/`t3` sont optionnelles. Si elles sont presentes, leurs pou
 La syntaxe courte accepte les symboles sans suffixe, par exemple `LINK`, et les convertit par defaut en futures Kraken quote USD/USDC : `PF_LINKUSD`. Le montant reste obligatoire, par exemple `25USDC`, pour eviter qu'un ordre soit cree avec une taille implicite.
 
 `/status <trade_id>` affiche le statut du trade et les ordres attaches : entree, targets reduce-only, prix, montant, statut et identifiant externe dry-run si disponible.
+Les previews Telegram ajoutent un bloc `bash` copiable avec `/confirm <trade_id>` et `/cancel <trade_id>` pour eviter de recopier l'identifiant a la main depuis mobile.
 `/entry_filled <trade_id>` ou `/entry-filled <trade_id>` marque l'ordre d'entree comme rempli et passe les targets reduce-only en `ready_to_submit` sans envoyer d'ordre Kraken. La commande est idempotente : la relancer sur un trade deja marque filled ne cree pas de nouvel evenement d'audit.
 `/submit_targets <trade_id>` ou `/submit-targets <trade_id>` marque les targets `ready_to_submit` comme soumises en dry-run, avec ids externes locaux, sans envoyer d'ordre Kraken. La commande est idempotente apres soumission : un retry indique les targets deja soumises, conserve les ids existants et ne cree pas de nouvel evenement d'audit.
 `/cancel <trade_id>` annule un trade et ses ordres encore planifies/prets a soumettre. La commande est idempotente : un retry sur un trade deja annule ne cree pas de nouvel evenement d'audit.

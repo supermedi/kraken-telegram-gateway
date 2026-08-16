@@ -87,6 +87,7 @@ def dispatch_telegram_text(text: str, session: Session, settings: Settings) -> s
                 "Dry-run: oui" if preview.dry_run else "Dry-run: non",
                 f"Confirmer: /confirm {preview.trade_id}",
                 f"Annuler: /cancel {preview.trade_id}",
+                format_trade_action_commands(preview.trade_id),
             ]
             if preview.warning:
                 lines.insert(2, f"Avertissement: {preview.warning}")
@@ -178,6 +179,10 @@ def dispatch_telegram_text(text: str, session: Session, settings: Settings) -> s
         return f"Commande refusee: {exc}"
 
     return "Commande inconnue. Envoie /help."
+
+
+def format_trade_action_commands(trade_id: str) -> str:
+    return f"```bash\n/confirm {trade_id}\n/cancel {trade_id}\n```"
 
 
 async def send_telegram_message(chat_id: int | str, text: str, settings: Settings) -> None:
