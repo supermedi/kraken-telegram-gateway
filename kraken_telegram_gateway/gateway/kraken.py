@@ -31,6 +31,10 @@ class KrakenAccountError(RuntimeError):
         self.debug_detail = debug_detail
 
 
+class KrakenOrderSubmissionError(RuntimeError):
+    """Raised when Kraken rejects or fails an order submission."""
+
+
 @dataclass(frozen=True)
 class KrakenAuthenticatedRequest:
     method: str
@@ -173,19 +177,23 @@ class KrakenClient:
                 "message": "Dry-run: no Kraken order was submitted.",
             }
 
-        # The signer/request preparation exists for review and tests, but V1 still blocks
-        # network submission until live trading is explicitly approved and implemented.
         try:
             payload = self.build_entry_order_payload(trade, self.instrument_provider.get(trade.pair))
+            external_order_id = self.submit_live_order(payload)
         except KrakenOrderPayloadError as exc:
             return {
                 "mode": "blocked",
                 "message": f"Live Kraken submission blocked: {exc}",
             }
-        self.build_private_request("POST", self.SEND_ORDER_PATH, payload)
+        except KrakenOrderSubmissionError as exc:
+            return {
+                "mode": "blocked",
+                "message": f"Live Kraken submission failed: {exc}",
+            }
         return {
-            "mode": "blocked",
-            "message": "Live Kraken submission blocked: network submission is intentionally disabled for V1.",
+            "mode": "live",
+            "external_order_id": external_order_id,
+            "message": "Live Kraken entry order submitted.",
         }
 
     def submit_target_order(self, trade: Trade, order: TradeOrder) -> dict[str, str]:
@@ -201,20 +209,47 @@ class KrakenClient:
                 "message": "Dry-run: no Kraken target order was submitted.",
             }
 
-        # As with entry orders, V1 prepares the boundary for review but never
-        # performs a Kraken network submission.
         try:
             payload = self.build_target_order_payload(trade, order, self.instrument_provider.get(order.pair))
+            external_order_id = self.submit_live_order(payload)
         except KrakenOrderPayloadError as exc:
             return {
                 "mode": "blocked",
                 "message": f"Live Kraken target submission blocked: {exc}",
             }
-        self.build_private_request("POST", self.SEND_ORDER_PATH, payload)
+        except KrakenOrderSubmissionError as exc:
+            return {
+                "mode": "blocked",
+                "message": f"Live Kraken target submission failed: {exc}",
+            }
         return {
-            "mode": "blocked",
-            "message": "Live Kraken target submission blocked: network submission is intentionally disabled for V1.",
+            "mode": "live",
+            "external_order_id": external_order_id,
+            "message": "Live Kraken target order submitted.",
         }
+
+    def submit_live_order(self, payload: Mapping[str, str | int | float | bool | None]) -> str:
+        request = self.build_private_request("POST", self.SEND_ORDER_PATH, payload)
+        try:
+            response = httpx.request(
+                request.method,
+                request.url,
+                headers=request.headers,
+                content=request.post_data,
+                timeout=10,
+            )
+            response.raise_for_status()
+            response_payload = response.json()
+        except httpx.HTTPError as exc:
+            raise KrakenOrderSubmissionError(f"request failed: {exc}") from exc
+        except ValueError as exc:
+            raise KrakenOrderSubmissionError("response is not valid JSON") from exc
+
+        if not isinstance(response_payload, Mapping):
+            raise KrakenOrderSubmissionError("response payload is not an object")
+        if str(response_payload.get("result", "success")).lower() != "success":
+            raise KrakenOrderSubmissionError(str(response_payload.get("error") or response_payload))
+        return extract_order_id(response_payload)
 
     def fetch_account_balances(self) -> list[AccountBalance]:
         request = self.build_account_request()
@@ -399,6 +434,28 @@ def format_account_error_debug_detail(
             f"response_keys={','.join(str(key) for key in payload.keys())}",
         ]
     )
+
+
+def extract_order_id(payload: Mapping[str, object]) -> str:
+    for key in ("order_id", "orderId", "order_id_2", "cliOrdId"):
+        value = payload.get(key)
+        if value:
+            return str(value)
+
+    send_status = payload.get("sendStatus")
+    if isinstance(send_status, Mapping):
+        for key in ("order_id", "orderId", "order_id_2", "cliOrdId"):
+            value = send_status.get(key)
+            if value:
+                return str(value)
+        status = send_status.get("status")
+        if status:
+            return str(status)
+
+    server_time = payload.get("serverTime")
+    if server_time:
+        return f"kraken-live-{server_time}"
+    return "kraken-live-submitted"
 
 
 def calculate_contract_size(amount_usdc: Decimal, leverage: Decimal, instrument: InstrumentMetadata) -> Decimal:

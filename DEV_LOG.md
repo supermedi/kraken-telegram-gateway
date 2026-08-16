@@ -15,19 +15,19 @@ The hourly isolated cron must use this file as the handoff point between runs:
 
 - Project: Kraken Futures <-> Telegram trading gateway.
 - Runtime: Python/FastAPI with SQLite persistence.
-- Safety mode: dry-run only by default; live Kraken execution is not approved.
+- Safety mode: dry-run only by default; live Kraken execution is approved only when the existing runtime gates are deliberately opened with `LIVE_TRADING_ENABLED=true`, `DRY_RUN=false`, and valid Kraken Futures credentials.
 - Telegram: webhook endpoint, command dispatcher, user allowlist, webhook secret, pause/resume, retry idempotency, trade previews with copyable `bash` action blocks, `/balance`/`/solde` read-only Kraken Futures account balance lookup with `account`/`currency` plus `asset`/`devise` currency aliases, idempotent `/cancel <trade_id>`, `/status <trade_id>` trade visibility, `/orders <trade_id>` compact order visibility with case-insensitive `status`/`role` filters, `/trades` recent-list visibility with `limit`/`offset`/case-insensitive `status`/`pair`/`side` filters, `/audit` safety-event diagnostics with case-insensitive `event_type`/`type`/`event` filters, `/audit_types` and `/audit-types` event-type counters, idempotent `/entry_filled <trade_id>`/`/entry-filled <trade_id>` local lifecycle tracking, and idempotent `/submit_targets <trade_id>`/`/submit-targets <trade_id>` dry-run target submission are implemented.
 - Risk policy: stop loss is optional by default with a warning; `REQUIRE_STOP_LOSS_FOR_CONFIRMATION=true` rejects confirmation of no-stop trades without touching planned orders or Kraken.
 - Trading model: trade previews are persisted with planned entry orders and reduce-only target exit orders; repeated cancellation retries are no-ops that avoid duplicate audit events; confirmed entries can be marked `filled`, which moves target exits to `ready_to_submit`; ready targets can then be marked `dry_run_submitted` with local external ids and no Kraken network submission; repeated target submission retries are no-ops that preserve existing ids and avoid duplicate audit events; `/trades` lists recent trades with `limit`, `offset`, `status`, `pair`, and `side` filters; `/trades/{trade_id}` returns the trade plus attached orders; `/trades/{trade_id}/orders` returns attached orders with optional `status` and `role` filters; `/audit` lists recent audit events with `trade_id` and `event_type` filters; `/audit/event-types` returns local audit event-type counters.
-- Kraken Futures: authenticated REST signing, private request preparation, read-only `/derivatives/api/v3/accounts` balance lookup exposed through Telegram `/balance`/`/solde` and API `GET /balance` with optional filters, a local-first/public-fallback instrument metadata provider, a metadata cache validator CLI, and safe entry/target limit-order payload boundaries are implemented; live order network submission remains intentionally blocked even when metadata is available.
+- Kraken Futures: authenticated REST signing, private request preparation, read-only `/derivatives/api/v3/accounts` balance lookup exposed through Telegram `/balance`/`/solde` and API `GET /balance` with optional filters, a local-first/public-fallback instrument metadata provider, a metadata cache validator CLI, safe entry/target limit-order payload boundaries, and live order POST submission to `/derivatives/api/v3/sendorder` are implemented behind the existing live gates.
 - Deployment: Dockerfile, Docker Compose, GHCR publish workflow, final public image name `ghcr.io/supermedi/kraken-telegram-gateway:latest`, and deployment documentation are in place; runtime secrets stay in local `.env`.
 - GitHub: dedicated public repository created and initial code pushed to `https://github.com/supermedi/kraken-telegram-gateway`.
 - Verification baseline: `python3 -m pytest -q` was last reported passing with 93 tests on 2026-08-16.
 
 ## Guardrails
 
-- Do not place real Kraken orders.
-- Do not flip `DRY_RUN=false` or `LIVE_TRADING_ENABLED=true`.
+- Do not place real Kraken orders unless the user explicitly asks for live mode and the runtime gates are already configured for it.
+- Do not flip `DRY_RUN=false` or `LIVE_TRADING_ENABLED=true` without explicit user approval.
 - Do not log, print, or commit secrets.
 - Keep changes small and testable.
 - Preserve user changes and avoid destructive git/file operations.
@@ -442,3 +442,15 @@ Tests: `python3 -m pytest tests/test_api.py tests/test_telegram.py -q` -> 39 pas
 Files changed: `kraken_telegram_gateway/gateway/service.py`, `tests/test_api.py`, `tests/test_telegram.py`, `README.md`, `DEV_LOG.md`.
 
 Tests: `python3 -m pytest tests/test_api.py tests/test_telegram.py -q` -> 41 passed, 1 Starlette/TestClient deprecation warning. `python3 -m compileall -q kraken_telegram_gateway` -> OK. `python3 -m pytest -q` -> 63 passed, 1 Starlette/TestClient deprecation warning.
+
+### 2026-08-16 23:46 UTC - Live Kraken Order Submission
+
+- User explicitly approved removing the final V1 network-submission block without adding a separate feature flag.
+- Kept the existing live gates as the only activation path: `LIVE_TRADING_ENABLED=true`, `DRY_RUN=false`, and valid Kraken Futures credentials.
+- Changed live entry and reduce-only target submission to POST signed payloads to Kraken Futures `/derivatives/api/v3/sendorder`.
+- Kraken order API errors now keep the local trade/order blocked instead of marking it submitted.
+- Updated live target submission messaging, README safety notes, and current dev-log guardrails.
+
+Files changed: `kraken_telegram_gateway/gateway/kraken.py`, `kraken_telegram_gateway/gateway/service.py`, `tests/test_kraken.py`, `tests/test_telegram.py`, `README.md`, `DEV_LOG.md`.
+
+Tests: `python3 -m pytest tests/test_kraken.py -q` -> 20 passed. `python3 -m compileall -q kraken_telegram_gateway` -> OK. `python3 -m pytest -q` -> 95 passed, 1 Starlette/TestClient deprecation warning.

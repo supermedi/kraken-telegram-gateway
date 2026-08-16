@@ -170,7 +170,18 @@ def test_confirm_accepts_stop_when_stop_policy_required():
     assert "Statut: dry_run_executed" in confirm_reply
 
 
-def test_confirm_with_live_gate_open_rejects_until_instrument_metadata_exists():
+def test_confirm_with_live_gate_open_rejects_when_kraken_rejects_order(monkeypatch):
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"result": "error", "error": "authenticationError"}
+
+    monkeypatch.setattr(
+        "kraken_telegram_gateway.gateway.kraken.httpx.request",
+        lambda method, url, *, headers, content, timeout: FakeResponse(),
+    )
     settings = Settings(
         max_amount_usdc=100,
         dry_run=False,
@@ -192,7 +203,7 @@ def test_confirm_with_live_gate_open_rejects_until_instrument_metadata_exists():
             select(TradeOrder).where(TradeOrder.trade_id == trade_id, TradeOrder.role == OrderRole.ENTRY)
         ).one()
 
-    assert "Live Kraken submission blocked" in confirm_reply
+    assert "Live Kraken submission failed: authenticationError" in confirm_reply
     assert "Statut: rejected" in confirm_reply
     assert trade is not None
     assert trade.status == "rejected"

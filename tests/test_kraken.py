@@ -452,7 +452,21 @@ def test_live_entry_submission_is_blocked_until_instrument_metadata_exists():
     assert "instrument metadata" in result["message"]
 
 
-def test_live_entry_submission_stays_blocked_after_metadata_payload_is_prepared(tmp_path):
+def test_live_entry_submission_posts_signed_order_after_metadata_payload_is_prepared(tmp_path, monkeypatch):
+    calls = []
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"result": "success", "sendStatus": {"order_id": "OID-123"}}
+
+    def fake_request(method, url, *, headers, content, timeout):
+        calls.append((method, url, headers, content, timeout))
+        return FakeResponse()
+
+    monkeypatch.setattr("kraken_telegram_gateway.gateway.kraken.httpx.request", fake_request)
     metadata_file = tmp_path / "instruments.json"
     metadata_file.write_text(
         """
@@ -482,12 +496,38 @@ def test_live_entry_submission_stays_blocked_after_metadata_payload_is_prepared(
     result = client.submit_entry_order(make_trade())
 
     assert result == {
-        "mode": "blocked",
-        "message": "Live Kraken submission blocked: network submission is intentionally disabled for V1.",
+        "mode": "live",
+        "external_order_id": "OID-123",
+        "message": "Live Kraken entry order submitted.",
     }
+    assert calls == [
+        (
+            "POST",
+            "https://futures.kraken.com/derivatives/api/v3/sendorder",
+            calls[0][2],
+            "symbol=PF_XBTUSD&orderType=lmt&side=buy&size=40&limitPrice=65000&reduceOnly=false",
+            10,
+        )
+    ]
+    assert calls[0][2]["APIKey"] == "public-key"
+    assert "Authent" in calls[0][2]
 
 
-def test_live_target_submission_stays_blocked_after_metadata_payload_is_prepared(tmp_path):
+def test_live_target_submission_posts_reduce_only_order_after_metadata_payload_is_prepared(tmp_path, monkeypatch):
+    calls = []
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"result": "success", "sendStatus": {"order_id": "OID-456"}}
+
+    def fake_request(method, url, *, headers, content, timeout):
+        calls.append((method, url, headers, content, timeout))
+        return FakeResponse()
+
+    monkeypatch.setattr("kraken_telegram_gateway.gateway.kraken.httpx.request", fake_request)
     trade = make_trade()
     order = TradeOrder(
         id="target-1",
@@ -529,6 +569,54 @@ def test_live_target_submission_stays_blocked_after_metadata_payload_is_prepared
     result = client.submit_target_order(trade, order)
 
     assert result == {
+        "mode": "live",
+        "external_order_id": "OID-456",
+        "message": "Live Kraken target order submitted.",
+    }
+    assert calls[0][3] == "symbol=PF_XBTUSD&orderType=lmt&side=sell&size=16&limitPrice=67000&reduceOnly=true"
+
+
+def test_live_entry_submission_is_blocked_when_kraken_rejects_order(tmp_path, monkeypatch):
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"result": "error", "error": "orderRejected"}
+
+    monkeypatch.setattr(
+        "kraken_telegram_gateway.gateway.kraken.httpx.request",
+        lambda method, url, *, headers, content, timeout: FakeResponse(),
+    )
+    metadata_file = tmp_path / "instruments.json"
+    metadata_file.write_text(
+        """
+        {
+          "instruments": [
+            {
+              "symbol": "PF_XBTUSD",
+              "contract_value_usdc": "5",
+              "size_step": "0.5",
+              "min_size": "1"
+            }
+          ]
+        }
+        """,
+        encoding="utf-8",
+    )
+    client = KrakenClient(
+        Settings(
+            dry_run=False,
+            live_trading_enabled=True,
+            kraken_api_key="public-key",
+            kraken_api_secret="dGVzdC1zZWNyZXQ=",
+            kraken_instrument_metadata_path=str(metadata_file),
+        )
+    )
+
+    result = client.submit_entry_order(make_trade())
+
+    assert result == {
         "mode": "blocked",
-        "message": "Live Kraken target submission blocked: network submission is intentionally disabled for V1.",
+        "message": "Live Kraken submission failed: orderRejected",
     }

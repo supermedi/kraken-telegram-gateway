@@ -2,7 +2,7 @@
 
 MVP local pour parser et valider des intentions de trades Kraken Futures envoyees depuis Telegram.
 
-La V1 est verrouillee en dry-run par defaut. Aucun ordre reel ne part vers Kraken sans configuration explicite de `LIVE_TRADING_ENABLED=false -> true`, `DRY_RUN=true -> false`, et des cles API. La signature REST Kraken Futures est preparee pour revue, mais la soumission reseau live reste bloquee.
+La V1 est verrouillee en dry-run par defaut. Aucun ordre reel ne part vers Kraken sans configuration explicite de `LIVE_TRADING_ENABLED=false -> true`, `DRY_RUN=true -> false`, et des cles API Kraken Futures valides. Quand ces garde-fous existants sont ouverts, `/confirm` peut soumettre l'ordre d'entree live a Kraken Futures.
 
 ## Securite Kraken Futures
 
@@ -24,7 +24,7 @@ Par defaut, le bot recupere les metadonnees d'instrument depuis l'endpoint publi
 }
 ```
 
-Ces valeurs doivent etre verifiees avant usage si un cache local est fourni. Meme avec des metadonnees valides et la gate live ouverte, la V1 bloque encore la soumission reseau Kraken.
+Ces valeurs doivent etre verifiees avant usage si un cache local est fourni. Avec des metadonnees valides et la gate live ouverte, la V1 soumet l'ordre live signe a Kraken Futures.
 
 Validation locale du cache avant de le monter sur le VPS :
 

@@ -208,6 +208,7 @@ def submit_ready_targets(trade_id: str, session: Session, settings: Settings) ->
 
     client = KrakenClient(settings)
     submitted_count = 0
+    live_count = 0
     blocked_messages = []
     for order in sorted(ready_targets, key=order_sort_key):
         result = client.submit_target_order(trade, order)
@@ -219,9 +220,14 @@ def submit_ready_targets(trade_id: str, session: Session, settings: Settings) ->
         order.updated_at = utc_now()
         session.add(order)
         submitted_count += 1
+        if result["mode"] == "live":
+            live_count += 1
 
     if submitted_count:
-        message = f"Dry-run: {submitted_count} target(s) reduce-only marquees soumises; aucun ordre Kraken envoye."
+        if live_count:
+            message = f"Live: {submitted_count} target(s) reduce-only envoyees a Kraken."
+        else:
+            message = f"Dry-run: {submitted_count} target(s) reduce-only marquees soumises; aucun ordre Kraken envoye."
         session.add(AuditEvent(trade_id=trade.id, event_type="targets_submitted", message=message))
     else:
         message = blocked_messages[0] if blocked_messages else "Aucune target reduce-only soumise."
