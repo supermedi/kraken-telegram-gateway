@@ -4,12 +4,15 @@ import pytest
 
 from kraken_telegram_gateway.gateway.config import Settings
 from kraken_telegram_gateway.gateway.kraken import (
+    AccountBalance,
     InstrumentMetadata,
+    KrakenAccountError,
     KrakenClient,
     KrakenFuturesSigner,
     KrakenLiveTradingDisabledError,
     KrakenOrderPayloadError,
     LocalInstrumentMetadataProvider,
+    parse_account_balances,
 )
 from kraken_telegram_gateway.gateway.models import Trade
 from kraken_telegram_gateway.gateway.models import TradeOrder
@@ -96,6 +99,63 @@ def test_private_request_preparation_signs_only_when_live_gate_is_open():
     assert "Nonce" in request.headers
     assert "Authent" in request.headers
     assert "test-secret" not in str(request.headers)
+
+
+def test_account_request_can_be_signed_in_dry_run_with_credentials():
+    client = KrakenClient(
+        Settings(
+            dry_run=True,
+            live_trading_enabled=False,
+            kraken_api_key="public-key",
+            kraken_api_secret="dGVzdC1zZWNyZXQ=",
+            kraken_futures_base_url="https://example.test",
+        )
+    )
+
+    request = client.build_account_request()
+
+    assert request.method == "GET"
+    assert request.url == "https://example.test/derivatives/api/v3/accounts"
+    assert request.endpoint_path == "/derivatives/api/v3/accounts"
+    assert request.post_data == ""
+    assert request.headers["APIKey"] == "public-key"
+    assert "Authent" in request.headers
+
+
+def test_parse_account_balances_reads_currency_rows():
+    balances = parse_account_balances(
+        {
+            "result": "success",
+            "accounts": {
+                "flex": {
+                    "currencies": {
+                        "USDC": {
+                            "quantity": "125.50",
+                            "equity": "130",
+                            "availableBalance": "120.25",
+                            "initialMargin": "9.75",
+                        }
+                    }
+                }
+            },
+        }
+    )
+
+    assert balances == [
+        AccountBalance(
+            account="flex",
+            currency="USDC",
+            balance=Decimal("125.50"),
+            equity=Decimal("130"),
+            available=Decimal("120.25"),
+            margin=Decimal("9.75"),
+        )
+    ]
+
+
+def test_parse_account_balances_rejects_error_result():
+    with pytest.raises(KrakenAccountError, match="not successful"):
+        parse_account_balances({"result": "error", "error": "api key invalid"})
 
 
 def test_dry_run_entry_submission_does_not_require_valid_kraken_secret():

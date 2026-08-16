@@ -4,6 +4,7 @@ import httpx
 from sqlmodel import Session
 
 from kraken_telegram_gateway.gateway.config import Settings
+from kraken_telegram_gateway.gateway.kraken import KrakenAccountError, KrakenLiveTradingDisabledError
 from kraken_telegram_gateway.gateway.models import OrderRole, OrderStatus, ProcessedTelegramUpdate, TradeOrder, TradeStatus
 from kraken_telegram_gateway.gateway.parser import CommandParseError
 from kraken_telegram_gateway.gateway.risk import RiskValidationError
@@ -12,9 +13,11 @@ from kraken_telegram_gateway.gateway.service import (
     confirm_trade,
     create_trade_preview,
     format_audit_events,
+    format_account_balances,
     format_trade_list,
     format_trade_orders,
     format_trade_status,
+    get_account_balances,
     get_trade_detail,
     is_trading_paused,
     list_audit_events,
@@ -134,6 +137,10 @@ def dispatch_telegram_text(text: str, session: Session, settings: Settings) -> s
             events = list_audit_events(session, **filters)
             return format_audit_events(events)
 
+        if command in {"/balance", "/solde"}:
+            balances = get_account_balances(settings)
+            return format_account_balances(balances)
+
         if command == "/pause":
             return pause_trading(session)
 
@@ -148,12 +155,12 @@ def dispatch_telegram_text(text: str, session: Session, settings: Settings) -> s
                 "/status [trade_id], /orders <trade_id> [status=... role=...], "
                 "/trades [limit=5 status=... pair=...], "
                 "/audit [trade_id] [event_type=... limit=5], "
-                "/pause, /resume.\n"
+                "/balance, /pause, /resume.\n"
                 "Exemple: /trade pair=PF_XBTUSD side=buy amount_usdc=100 entry=limit:65000 "
                 "t1=67000:40% t2=69000:40% t3=72000:20%\n"
                 "Exemple court: LINK LONG 25USDC 2x Entry 9.356 Sl 9.298"
             )
-    except (CommandParseError, RiskValidationError, ValueError) as exc:
+    except (CommandParseError, RiskValidationError, KrakenAccountError, KrakenLiveTradingDisabledError, ValueError) as exc:
         return f"Commande refusee: {exc}"
 
     return "Commande inconnue. Envoie /help."

@@ -9,6 +9,8 @@ from decimal import Decimal, ROUND_DOWN
 from pathlib import Path
 from urllib.parse import urlencode
 
+import httpx
+
 from kraken_telegram_gateway.gateway.config import Settings
 from kraken_telegram_gateway.gateway.models import Trade, TradeOrder
 
@@ -19,6 +21,10 @@ class KrakenLiveTradingDisabledError(RuntimeError):
 
 class KrakenOrderPayloadError(ValueError):
     """Raised when a Kraken order payload cannot be built safely."""
+
+
+class KrakenAccountError(RuntimeError):
+    """Raised when Kraken account data cannot be fetched or parsed."""
 
 
 @dataclass(frozen=True)
@@ -36,6 +42,16 @@ class InstrumentMetadata:
     contract_value_usdc: Decimal
     size_step: Decimal
     min_size: Decimal
+
+
+@dataclass(frozen=True)
+class AccountBalance:
+    account: str
+    currency: str
+    balance: Decimal | None = None
+    equity: Decimal | None = None
+    available: Decimal | None = None
+    margin: Decimal | None = None
 
 
 class LocalInstrumentMetadataProvider:
@@ -90,6 +106,7 @@ class KrakenFuturesSigner:
 
 class KrakenClient:
     SEND_ORDER_PATH = "/derivatives/api/v3/sendorder"
+    ACCOUNTS_PATH = "/derivatives/api/v3/accounts"
 
     def __init__(
         self,
@@ -151,6 +168,26 @@ class KrakenClient:
             "mode": "blocked",
             "message": "Live Kraken target submission blocked: network submission is intentionally disabled for V1.",
         }
+
+    def fetch_account_balances(self) -> list[AccountBalance]:
+        request = self.build_account_request()
+        try:
+            response = httpx.get(request.url, headers=request.headers, timeout=10)
+            response.raise_for_status()
+            payload = response.json()
+        except httpx.HTTPError as exc:
+            raise KrakenAccountError(f"Kraken balance request failed: {exc}") from exc
+        except ValueError as exc:
+            raise KrakenAccountError("Kraken balance response is not valid JSON.") from exc
+        return parse_account_balances(payload)
+
+    def build_account_request(self) -> KrakenAuthenticatedRequest:
+        return self.build_private_request(
+            "GET",
+            self.ACCOUNTS_PATH,
+            {},
+            require_live_trading=False,
+        )
 
     def build_entry_order_payload(
         self,
@@ -226,8 +263,10 @@ class KrakenClient:
         method: str,
         endpoint_path: str,
         params: Mapping[str, str | int | float | bool | None],
+        *,
+        require_live_trading: bool = True,
     ) -> KrakenAuthenticatedRequest:
-        if not self.settings.can_live_trade:
+        if require_live_trading and not self.settings.can_live_trade:
             raise KrakenLiveTradingDisabledError("Kraken live request preparation is disabled by dry-run settings.")
         if not self.settings.kraken_api_key or not self.settings.kraken_api_secret:
             raise KrakenLiveTradingDisabledError("Kraken API credentials are required for signed requests.")
@@ -305,3 +344,52 @@ def format_decimal(value: Decimal) -> str:
     if normalized == normalized.to_integral():
         return str(normalized.quantize(Decimal("1")))
     return format(normalized, "f")
+
+
+def parse_account_balances(payload: object) -> list[AccountBalance]:
+    if not isinstance(payload, Mapping):
+        raise KrakenAccountError("Kraken balance response has an unexpected shape.")
+    if str(payload.get("result", "success")).lower() != "success":
+        raise KrakenAccountError(f"Kraken balance request was not successful: {payload.get('error') or payload}")
+
+    accounts = payload.get("accounts")
+    if not isinstance(accounts, Mapping):
+        raise KrakenAccountError("Kraken balance response does not contain accounts.")
+
+    balances: list[AccountBalance] = []
+    for account_name, raw_account in accounts.items():
+        if not isinstance(raw_account, Mapping):
+            continue
+        currencies = raw_account.get("currencies")
+        if isinstance(currencies, Mapping):
+            for currency, raw_currency in currencies.items():
+                if isinstance(raw_currency, Mapping):
+                    balances.append(_parse_balance_row(str(account_name), str(currency), raw_currency))
+            continue
+
+        currency = raw_account.get("currency")
+        if currency is not None:
+            balances.append(_parse_balance_row(str(account_name), str(currency), raw_account))
+
+    if not balances:
+        raise KrakenAccountError("Kraken balance response did not include currency balances.")
+    return balances
+
+
+def _parse_balance_row(account: str, currency: str, raw: Mapping[str, object]) -> AccountBalance:
+    return AccountBalance(
+        account=account,
+        currency=currency.upper(),
+        balance=_optional_decimal(raw, "balance", "quantity", "walletBalance"),
+        equity=_optional_decimal(raw, "equity", "totalEquity"),
+        available=_optional_decimal(raw, "available", "availableBalance", "free"),
+        margin=_optional_decimal(raw, "margin", "initialMargin", "marginBalance"),
+    )
+
+
+def _optional_decimal(raw: Mapping[str, object], *keys: str) -> Decimal | None:
+    for key in keys:
+        value = raw.get(key)
+        if value is not None:
+            return Decimal(str(value))
+    return None

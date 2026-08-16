@@ -15,13 +15,13 @@ The hourly isolated cron must use this file as the handoff point between runs:
 - Project: Kraken Futures <-> Telegram trading gateway.
 - Runtime: Python/FastAPI with SQLite persistence.
 - Safety mode: dry-run only by default; live Kraken execution is not approved.
-- Telegram: webhook endpoint, command dispatcher, user allowlist, webhook secret, pause/resume, retry idempotency, idempotent `/cancel <trade_id>`, `/status <trade_id>` trade visibility, `/orders <trade_id>` compact order visibility with `status`/`role` filters, `/trades` recent-list visibility with filters, `/audit` safety-event diagnostics, idempotent `/entry_filled <trade_id>` local lifecycle tracking, and idempotent `/submit_targets <trade_id>` dry-run target submission are implemented.
+- Telegram: webhook endpoint, command dispatcher, user allowlist, webhook secret, pause/resume, retry idempotency, `/balance`/`/solde` read-only Kraken Futures account balance lookup, idempotent `/cancel <trade_id>`, `/status <trade_id>` trade visibility, `/orders <trade_id>` compact order visibility with `status`/`role` filters, `/trades` recent-list visibility with filters, `/audit` safety-event diagnostics, idempotent `/entry_filled <trade_id>` local lifecycle tracking, and idempotent `/submit_targets <trade_id>` dry-run target submission are implemented.
 - Risk policy: stop loss is optional by default with a warning; `REQUIRE_STOP_LOSS_FOR_CONFIRMATION=true` rejects confirmation of no-stop trades without touching planned orders or Kraken.
 - Trading model: trade previews are persisted with planned entry orders and reduce-only target exit orders; repeated cancellation retries are no-ops that avoid duplicate audit events; confirmed entries can be marked `filled`, which moves target exits to `ready_to_submit`; ready targets can then be marked `dry_run_submitted` with local external ids and no Kraken network submission; repeated target submission retries are no-ops that preserve existing ids and avoid duplicate audit events; `/trades` lists recent trades with `limit`, `offset`, `status`, and `pair` filters; `/trades/{trade_id}` returns the trade plus attached orders; `/trades/{trade_id}/orders` returns attached orders with optional `status` and `role` filters; `/audit` lists recent audit events with `trade_id` and `event_type` filters.
-- Kraken Futures: authenticated REST signing, private request preparation, a local instrument metadata cache, a metadata cache validator CLI, and safe entry/target limit-order payload boundaries are implemented behind the live-trading gate; network submission remains intentionally blocked even when metadata is available.
+- Kraken Futures: authenticated REST signing, private request preparation, read-only `/derivatives/api/v3/accounts` balance lookup, a local instrument metadata cache, a metadata cache validator CLI, and safe entry/target limit-order payload boundaries are implemented; live order network submission remains intentionally blocked even when metadata is available.
 - Deployment: Dockerfile, Docker Compose, GHCR publish workflow, and deployment documentation are in place; runtime secrets stay in local `.env`.
 - GitHub: dedicated public repository created and initial code pushed to `https://github.com/supermedi/kraken-telegram-gateway`.
-- Verification baseline: `python3 -m pytest -q` was last reported passing with 63 tests on 2026-08-16.
+- Verification baseline: `python3 -m pytest -q` was last reported passing with 74 tests on 2026-08-16.
 
 ## Guardrails
 
@@ -41,6 +41,15 @@ The hourly isolated cron must use this file as the handoff point between runs:
 5. Extend audit diagnostics only if operators need event-type shortcuts, retention/export, or richer webhook failure visibility.
 
 ## Cycle Log
+
+### 2026-08-16 15:16 UTC - Telegram Balance Command
+
+- Added `/balance` and `/solde` Telegram commands for read-only Kraken Futures account balance lookup.
+- Added signed GET request preparation for `/derivatives/api/v3/accounts` that works in dry-run when Kraken API credentials are configured.
+- Added flexible account-balance parsing and Telegram formatting for balance, equity, available, and margin fields.
+- Documented the new commands in `README.md`.
+
+Tests: `python3 -m pytest -q` -> 74 passed, 1 Starlette/TestClient deprecation warning.
 
 ### 2026-08-14 19:50 UTC - Tracker Initialized
 

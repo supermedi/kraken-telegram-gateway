@@ -1,6 +1,7 @@
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from kraken_telegram_gateway.gateway.config import Settings
+from kraken_telegram_gateway.gateway.kraken import AccountBalance
 from kraken_telegram_gateway.gateway.models import (
     AuditEvent,
     OrderRole,
@@ -212,6 +213,37 @@ def test_status_includes_planned_order_visibility():
     assert "- entry: buy limit 65000 | 100 USDC | reduce-only=non | statut=planned" in status_reply
     assert "- target_exit: sell limit 67000 | 40 USDC | target=40% | reduce-only=oui | statut=planned" in status_reply
     assert "- target_exit: sell limit 69000 | 60 USDC | target=60% | reduce-only=oui | statut=planned" in status_reply
+
+
+def test_balance_command_formats_kraken_futures_balances(monkeypatch):
+    def fake_fetch_account_balances(self):
+        return [
+            AccountBalance(
+                account="flex",
+                currency="USDC",
+                balance=100,
+                equity=105,
+                available=90,
+                margin=15,
+            )
+        ]
+
+    monkeypatch.setattr(
+        "kraken_telegram_gateway.gateway.kraken.KrakenClient.fetch_account_balances",
+        fake_fetch_account_balances,
+    )
+
+    with make_session() as session:
+        reply = dispatch_telegram_text("/balance", session, Settings())
+
+    assert reply == "Solde Kraken Futures:\n- flex USDC | balance=100 | equity=105 | available=90 | margin=15"
+
+
+def test_solde_alias_reports_missing_kraken_credentials():
+    with make_session() as session:
+        reply = dispatch_telegram_text("/solde", session, Settings())
+
+    assert reply == "Commande refusee: Kraken API credentials are required for signed requests."
 
 
 def test_orders_command_lists_attached_orders_only():

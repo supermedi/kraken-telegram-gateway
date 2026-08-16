@@ -4,7 +4,7 @@ from sqlalchemy import func
 from sqlmodel import Session, select
 
 from kraken_telegram_gateway.gateway.config import Settings
-from kraken_telegram_gateway.gateway.kraken import KrakenClient
+from kraken_telegram_gateway.gateway.kraken import AccountBalance, KrakenClient
 from kraken_telegram_gateway.gateway.models import (
     AuditEvent,
     BotState,
@@ -303,6 +303,10 @@ def list_audit_events(
     return AuditEventList(items=list(events), total=total, limit=limit, offset=offset)
 
 
+def get_account_balances(settings: Settings) -> list[AccountBalance]:
+    return KrakenClient(settings).fetch_account_balances()
+
+
 def format_trade_summary(trade: Trade) -> str:
     targets = ", ".join(
         f"{target['price']:g}:{target['percent']:g}%"
@@ -366,6 +370,31 @@ def format_audit_events(events: AuditEventList) -> str:
         trade = f" | trade={event.trade_id}" if event.trade_id else ""
         lines.append(f"- {event.event_type}{trade} | {event.message}")
     return "\n".join(lines)
+
+
+def format_account_balances(balances: list[AccountBalance]) -> str:
+    if not balances:
+        return "Aucun solde trouve."
+
+    lines = ["Solde Kraken Futures:"]
+    for balance in sorted(balances, key=lambda item: (item.account, item.currency)):
+        parts = [f"- {balance.account} {balance.currency}"]
+        parts.extend(
+            f"{label}={format_optional_decimal(value)}"
+            for label, value in (
+                ("balance", balance.balance),
+                ("equity", balance.equity),
+                ("available", balance.available),
+                ("margin", balance.margin),
+            )
+            if value is not None
+        )
+        lines.append(" | ".join(parts))
+    return "\n".join(lines)
+
+
+def format_optional_decimal(value) -> str:
+    return f"{value:g}"
 
 
 def format_trade_order(order: TradeOrder) -> str:

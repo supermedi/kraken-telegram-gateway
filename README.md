@@ -95,6 +95,8 @@ Commandes Telegram supportees :
 /orders <trade_id> [status=planned role=target_exit]
 /trades [limit=5 status=pending_confirmation pair=PF_XBTUSD]
 /audit [trade_id] [event_type=trade_rejected limit=5]
+/balance
+/solde
 /pause
 /resume
 ```
@@ -110,6 +112,7 @@ La syntaxe courte accepte les symboles sans suffixe, par exemple `LINK`, et les 
 `/orders <trade_id>` affiche seulement la liste des ordres attaches pour relire rapidement l'entree et les targets, avec filtres optionnels `status` et `role`.
 `/trades` affiche les derniers trades depuis Telegram, avec filtres optionnels `limit`, `offset`, `status` et `pair`.
 `/audit` affiche les derniers evenements d'audit, filtrables par `trade_id` et `event_type`, pour diagnostiquer les confirmations rejetees et les garde-fous.
+`/balance` ou `/solde` interroge le endpoint Kraken Futures `/derivatives/api/v3/accounts` en lecture seule et affiche les soldes par compte/devise. Cette commande exige `KRAKEN_API_KEY` et `KRAKEN_API_SECRET`, mais reste disponible en dry-run.
 
 ## Exemple
 
