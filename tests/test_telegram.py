@@ -1,3 +1,4 @@
+import pytest
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from kraken_telegram_gateway.gateway.config import Settings
@@ -10,7 +11,7 @@ from kraken_telegram_gateway.gateway.models import (
     Trade,
     TradeOrder,
 )
-from kraken_telegram_gateway.gateway.telegram import dispatch_telegram_text, handle_telegram_update
+from kraken_telegram_gateway.gateway.telegram import dispatch_telegram_text, handle_telegram_update, send_telegram_message
 
 
 def make_session() -> Session:
@@ -34,6 +35,49 @@ def test_trade_message_creates_preview_and_confirm_hint():
     assert "```bash\n/confirm " in reply
     assert "\n/cancel " in reply
     assert reply.endswith("```")
+
+
+@pytest.mark.anyio
+async def test_send_telegram_message_enables_markdown_parse_mode(monkeypatch):
+    calls = []
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+    class FakeAsyncClient:
+        def __init__(self, *, timeout):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def post(self, url, *, json):
+            calls.append((url, json, self.timeout))
+            return FakeResponse()
+
+    monkeypatch.setattr("kraken_telegram_gateway.gateway.telegram.httpx.AsyncClient", FakeAsyncClient)
+
+    await send_telegram_message(
+        123,
+        "```bash\n/confirm trade-1\n```",
+        Settings(telegram_bot_token="token"),
+    )
+
+    assert calls == [
+        (
+            "https://api.telegram.org/bottoken/sendMessage",
+            {
+                "chat_id": 123,
+                "text": "```bash\n/confirm trade-1\n```",
+                "parse_mode": "Markdown",
+            },
+            10,
+        )
+    ]
 
 
 def test_confirm_executes_dry_run_after_preview():

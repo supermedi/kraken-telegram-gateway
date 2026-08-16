@@ -190,7 +190,7 @@ async def send_telegram_message(chat_id: int | str, text: str, settings: Setting
         raise TelegramUpdateError("TELEGRAM_BOT_TOKEN is not configured.")
     url = f"https://api.telegram.org/bot{settings.telegram_bot_token}/sendMessage"
     async with httpx.AsyncClient(timeout=10) as client:
-        response = await client.post(url, json={"chat_id": chat_id, "text": text})
+        response = await client.post(url, json={"chat_id": chat_id, "text": text, "parse_mode": "Markdown"})
         response.raise_for_status()
 
 
