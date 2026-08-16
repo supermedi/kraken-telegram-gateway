@@ -1,6 +1,6 @@
 services:
   gateway:
-    image: ${IMAGE_NAME:-ghcr.io/YOUR_GITHUB_USER/kraken-telegram-gateway:latest}
+    image: ${IMAGE_NAME:-ghcr.io/supermedi/kraken-telegram-gateway:latest}
     restart: unless-stopped
     env_file:
       - .env

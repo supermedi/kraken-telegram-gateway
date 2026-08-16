@@ -19,9 +19,9 @@ The hourly isolated cron must use this file as the handoff point between runs:
 - Risk policy: stop loss is optional by default with a warning; `REQUIRE_STOP_LOSS_FOR_CONFIRMATION=true` rejects confirmation of no-stop trades without touching planned orders or Kraken.
 - Trading model: trade previews are persisted with planned entry orders and reduce-only target exit orders; repeated cancellation retries are no-ops that avoid duplicate audit events; confirmed entries can be marked `filled`, which moves target exits to `ready_to_submit`; ready targets can then be marked `dry_run_submitted` with local external ids and no Kraken network submission; repeated target submission retries are no-ops that preserve existing ids and avoid duplicate audit events; `/trades` lists recent trades with `limit`, `offset`, `status`, and `pair` filters; `/trades/{trade_id}` returns the trade plus attached orders; `/trades/{trade_id}/orders` returns attached orders with optional `status` and `role` filters; `/audit` lists recent audit events with `trade_id` and `event_type` filters.
 - Kraken Futures: authenticated REST signing, private request preparation, read-only `/derivatives/api/v3/accounts` balance lookup exposed through Telegram `/balance`/`/solde` and API `GET /balance` with optional filters, a local instrument metadata cache, a metadata cache validator CLI, and safe entry/target limit-order payload boundaries are implemented; live order network submission remains intentionally blocked even when metadata is available.
-- Deployment: Dockerfile, Docker Compose, GHCR publish workflow, and deployment documentation are in place; runtime secrets stay in local `.env`.
+- Deployment: Dockerfile, Docker Compose, GHCR publish workflow, final public image name `ghcr.io/supermedi/kraken-telegram-gateway:latest`, and deployment documentation are in place; runtime secrets stay in local `.env`.
 - GitHub: dedicated public repository created and initial code pushed to `https://github.com/supermedi/kraken-telegram-gateway`.
-- Verification baseline: `python3 -m pytest -q` was last reported passing with 79 tests on 2026-08-16.
+- Verification baseline: `python3 -m pytest -q` was last reported passing with 81 tests on 2026-08-16.
 
 ## Guardrails
 
@@ -34,13 +34,25 @@ The hourly isolated cron must use this file as the handoff point between runs:
 
 ## Next Queue
 
-1. Validate Docker build in the target VPS environment and set the final public image name.
+1. Validate Docker build in the target VPS environment, then confirm GHCR pull/run health against `ghcr.io/supermedi/kraken-telegram-gateway:latest`.
 2. Feed the instrument metadata validator with an operator-reviewed Kraken Futures cache, then mount it via `KRAKEN_INSTRUMENT_METADATA_PATH` in VPS dry-run.
 3. Add Kraken account-event polling/webhook abstraction for real entry fill detection only after live integration is explicitly approved.
 4. Harden target-submission retry diagnostics further only if mixed blocked/submitted live-integration states need clearer operator feedback.
 5. Extend audit/balance diagnostics only if operators need event-type shortcuts, retention/export, balance freshness, or richer webhook failure visibility.
 
 ## Cycle Log
+
+### 2026-08-16 16:44 UTC - Final GHCR Image Name
+
+- Chose the deployability part of Next Queue item 1 because Docker validation still requires an environment with Docker installed.
+- Set the Compose default image to the final public GHCR image: `ghcr.io/supermedi/kraken-telegram-gateway:latest`.
+- Updated `DEPLOYMENT.md` so publish, push, tag, and VPS `.env` examples use the real `supermedi/kraken-telegram-gateway` image path instead of placeholders.
+- Verified no old image placeholder remains in deployment docs/config.
+- Kept Kraken safety guardrails unchanged: no live trading settings, order submission code, secrets, or dry-run defaults were changed.
+
+Files changed: `compose.yml`, `DEPLOYMENT.md`, `DEV_LOG.md`.
+
+Tests: `python3 -m pytest -q` -> 81 passed, 1 Starlette/TestClient deprecation warning. `docker --version` -> unavailable in this container (`docker: command not found`), so build validation remains queued for the VPS/host environment.
 
 ### 2026-08-16 15:55 UTC - Kraken Balance Auth Retry
 

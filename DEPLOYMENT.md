@@ -20,18 +20,18 @@ Recommended registry: GitHub Container Registry (`ghcr.io`).
 1. Push this repository to GitHub.
 2. Keep the repository public if you want the image to be publicly discoverable.
 3. The workflow `.github/workflows/publish-docker.yml` publishes:
-   - `ghcr.io/<owner>/<repo>:main`
-   - `ghcr.io/<owner>/<repo>:latest`
-   - `ghcr.io/<owner>/<repo>:sha-<commit>`
-   - `ghcr.io/<owner>/<repo>:vX.Y.Z` when a version tag is pushed
+   - `ghcr.io/supermedi/kraken-telegram-gateway:main`
+   - `ghcr.io/supermedi/kraken-telegram-gateway:latest`
+   - `ghcr.io/supermedi/kraken-telegram-gateway:sha-<commit>`
+   - `ghcr.io/supermedi/kraken-telegram-gateway:vX.Y.Z` when a version tag is pushed
 4. In GitHub, set the package visibility to public if GHCR creates it as private.
 
 Manual publish from your machine or VPS:
 
 ```bash
-docker build -t ghcr.io/<owner>/<repo>:latest .
+docker build -t ghcr.io/supermedi/kraken-telegram-gateway:latest .
 docker login ghcr.io
-docker push ghcr.io/<owner>/<repo>:latest
+docker push ghcr.io/supermedi/kraken-telegram-gateway:latest
 ```
 
 ## Configure The VPS
@@ -59,7 +59,7 @@ TELEGRAM_ALLOWED_USER_IDS=1544791425
 KRAKEN_API_KEY=
 KRAKEN_API_SECRET=
 HOST_PORT=8010
-IMAGE_NAME=ghcr.io/<owner>/<repo>:latest
+IMAGE_NAME=ghcr.io/supermedi/kraken-telegram-gateway:latest
 ```
 
 Start:
