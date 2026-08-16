@@ -95,7 +95,7 @@ Commandes Telegram supportees :
 /orders <trade_id> [status=planned role=target_exit]
 /trades [limit=5 status=pending_confirmation pair=PF_XBTUSD]
 /audit [trade_id] [event_type=trade_rejected limit=5]
-/balance
+/balance [account=flex currency=USDC]
 /solde
 /pause
 /resume
@@ -112,7 +112,7 @@ La syntaxe courte accepte les symboles sans suffixe, par exemple `LINK`, et les 
 `/orders <trade_id>` affiche seulement la liste des ordres attaches pour relire rapidement l'entree et les targets, avec filtres optionnels `status` et `role`.
 `/trades` affiche les derniers trades depuis Telegram, avec filtres optionnels `limit`, `offset`, `status` et `pair`.
 `/audit` affiche les derniers evenements d'audit, filtrables par `trade_id` et `event_type`, pour diagnostiquer les confirmations rejetees et les garde-fous.
-`/balance` ou `/solde` interroge le endpoint Kraken Futures `/derivatives/api/v3/accounts` en lecture seule et affiche les soldes par compte/devise. Cette commande exige `KRAKEN_API_KEY` et `KRAKEN_API_SECRET`, mais reste disponible en dry-run.
+`/balance` ou `/solde` interroge le endpoint Kraken Futures `/derivatives/api/v3/accounts` en lecture seule et affiche les soldes par compte/devise. Les filtres optionnels `account` et `currency` permettent de limiter la reponse, par exemple `/balance account=flex currency=USDC`. Cette commande exige des cles API Futures (`KRAKEN_API_KEY` et `KRAKEN_API_SECRET`), pas des cles Spot, et reste disponible en dry-run. Si Kraken renvoie `authenticationError`, verifier aussi que `KRAKEN_FUTURES_BASE_URL` correspond au compte des cles (`https://futures.kraken.com` pour live, `https://demo-futures.kraken.com` pour demo).
 
 ## Exemple
 
@@ -140,7 +140,10 @@ curl "http://localhost:8000/trades/<trade_id>/orders?status=planned"
 curl "http://localhost:8000/trades/<trade_id>/orders?status=dry_run_submitted&role=target_exit"
 curl "http://localhost:8000/trades/<trade_id>/orders?role=target_exit&status=planned"
 curl "http://localhost:8000/audit?trade_id=<trade_id>&event_type=trade_rejected"
+curl http://localhost:8000/balance
+curl "http://localhost:8000/balance?account=flex&currency=USDC"
 ```
 
 `GET /trades` retourne les trades les plus recents sous forme `{items,total,limit,offset}` avec filtres optionnels `status` et `pair`.
 `GET /audit` retourne les evenements d'audit les plus recents sous forme `{items,total,limit,offset}` avec filtres optionnels `trade_id` et `event_type`.
+`GET /balance` retourne les soldes Kraken Futures lus via `/derivatives/api/v3/accounts`, avec filtres optionnels `account` et `currency`; il exige les cles Kraken mais reste strictement read-only et disponible en dry-run.

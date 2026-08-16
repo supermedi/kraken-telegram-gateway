@@ -82,17 +82,21 @@ class LocalInstrumentMetadataProvider:
 
 class KrakenFuturesSigner:
     def __init__(self, api_key: str, api_secret: str, nonce_factory: Callable[[], str] | None = None):
-        self.api_key = api_key
-        self.api_secret = api_secret
+        self.api_key = api_key.strip()
+        self.api_secret = api_secret.strip()
         self.nonce_factory = nonce_factory or self._default_nonce
 
-    def build_headers(self, post_data: str, endpoint_path: str) -> dict[str, str]:
-        nonce = self.nonce_factory()
-        return {
+    def build_headers(self, post_data: str, endpoint_path: str, *, include_nonce: bool = True) -> dict[str, str]:
+        nonce = self.nonce_factory() if include_nonce else ""
+        headers = {
+            "Content-Type": "application/x-www-form-urlencoded; charset=utf-8",
+            "Accept": "application/json",
             "APIKey": self.api_key,
-            "Nonce": nonce,
             "Authent": self.sign(post_data, nonce, endpoint_path),
         }
+        if include_nonce:
+            headers["Nonce"] = nonce
+        return headers
 
     def sign(self, post_data: str, nonce: str, endpoint_path: str) -> str:
         digest = hashlib.sha256(f"{post_data}{nonce}{endpoint_path}".encode("utf-8")).digest()
@@ -174,21 +178,34 @@ class KrakenClient:
     def fetch_account_balances(self) -> list[AccountBalance]:
         request = self.build_account_request()
         try:
-            response = httpx.get(request.url, headers=request.headers, timeout=10)
+            response = httpx.request(request.method, request.url, headers=request.headers, timeout=10)
             response.raise_for_status()
             payload = response.json()
         except httpx.HTTPError as exc:
             raise KrakenAccountError(f"Kraken balance request failed: {exc}") from exc
         except ValueError as exc:
             raise KrakenAccountError("Kraken balance response is not valid JSON.") from exc
+
+        if is_kraken_authentication_error(payload) and "Nonce" in request.headers:
+            request = self.build_account_request(include_nonce=False)
+            try:
+                response = httpx.request(request.method, request.url, headers=request.headers, timeout=10)
+                response.raise_for_status()
+                payload = response.json()
+            except httpx.HTTPError as exc:
+                raise KrakenAccountError(f"Kraken balance request failed: {exc}") from exc
+            except ValueError as exc:
+                raise KrakenAccountError("Kraken balance response is not valid JSON.") from exc
+
         return parse_account_balances(payload)
 
-    def build_account_request(self) -> KrakenAuthenticatedRequest:
+    def build_account_request(self, *, include_nonce: bool = True) -> KrakenAuthenticatedRequest:
         return self.build_private_request(
             "GET",
             self.ACCOUNTS_PATH,
             {},
             require_live_trading=False,
+            include_nonce=include_nonce,
         )
 
     def build_entry_order_payload(
@@ -267,6 +284,7 @@ class KrakenClient:
         params: Mapping[str, str | int | float | bool | None],
         *,
         require_live_trading: bool = True,
+        include_nonce: bool = True,
     ) -> KrakenAuthenticatedRequest:
         if require_live_trading and not self.settings.can_live_trade:
             raise KrakenLiveTradingDisabledError("Kraken live request preparation is disabled by dry-run settings.")
@@ -281,7 +299,7 @@ class KrakenClient:
             request_path=f"{self.API_PREFIX}{endpoint_path}",
             endpoint_path=endpoint_path,
             post_data=post_data,
-            headers=signer.build_headers(post_data, endpoint_path),
+            headers=signer.build_headers(post_data, endpoint_path, include_nonce=include_nonce),
         )
 
 
@@ -289,6 +307,17 @@ def encode_param_value(value: str | int | float | bool) -> str | int | float:
     if isinstance(value, bool):
         return str(value).lower()
     return value
+
+
+def is_kraken_authentication_error(payload: object) -> bool:
+    if not isinstance(payload, Mapping):
+        return False
+    error = payload.get("error")
+    if isinstance(error, str):
+        return error == "authenticationError"
+    if isinstance(error, list):
+        return "authenticationError" in error
+    return False
 
 
 def calculate_contract_size(amount_usdc: Decimal, leverage: Decimal, instrument: InstrumentMetadata) -> Decimal:

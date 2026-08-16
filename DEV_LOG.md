@@ -15,13 +15,13 @@ The hourly isolated cron must use this file as the handoff point between runs:
 - Project: Kraken Futures <-> Telegram trading gateway.
 - Runtime: Python/FastAPI with SQLite persistence.
 - Safety mode: dry-run only by default; live Kraken execution is not approved.
-- Telegram: webhook endpoint, command dispatcher, user allowlist, webhook secret, pause/resume, retry idempotency, `/balance`/`/solde` read-only Kraken Futures account balance lookup, idempotent `/cancel <trade_id>`, `/status <trade_id>` trade visibility, `/orders <trade_id>` compact order visibility with `status`/`role` filters, `/trades` recent-list visibility with filters, `/audit` safety-event diagnostics, idempotent `/entry_filled <trade_id>` local lifecycle tracking, and idempotent `/submit_targets <trade_id>` dry-run target submission are implemented.
+- Telegram: webhook endpoint, command dispatcher, user allowlist, webhook secret, pause/resume, retry idempotency, `/balance`/`/solde` read-only Kraken Futures account balance lookup with `account`/`currency` filters, idempotent `/cancel <trade_id>`, `/status <trade_id>` trade visibility, `/orders <trade_id>` compact order visibility with `status`/`role` filters, `/trades` recent-list visibility with filters, `/audit` safety-event diagnostics, idempotent `/entry_filled <trade_id>` local lifecycle tracking, and idempotent `/submit_targets <trade_id>` dry-run target submission are implemented.
 - Risk policy: stop loss is optional by default with a warning; `REQUIRE_STOP_LOSS_FOR_CONFIRMATION=true` rejects confirmation of no-stop trades without touching planned orders or Kraken.
 - Trading model: trade previews are persisted with planned entry orders and reduce-only target exit orders; repeated cancellation retries are no-ops that avoid duplicate audit events; confirmed entries can be marked `filled`, which moves target exits to `ready_to_submit`; ready targets can then be marked `dry_run_submitted` with local external ids and no Kraken network submission; repeated target submission retries are no-ops that preserve existing ids and avoid duplicate audit events; `/trades` lists recent trades with `limit`, `offset`, `status`, and `pair` filters; `/trades/{trade_id}` returns the trade plus attached orders; `/trades/{trade_id}/orders` returns attached orders with optional `status` and `role` filters; `/audit` lists recent audit events with `trade_id` and `event_type` filters.
-- Kraken Futures: authenticated REST signing, private request preparation, read-only `/derivatives/api/v3/accounts` balance lookup, a local instrument metadata cache, a metadata cache validator CLI, and safe entry/target limit-order payload boundaries are implemented; live order network submission remains intentionally blocked even when metadata is available.
+- Kraken Futures: authenticated REST signing, private request preparation, read-only `/derivatives/api/v3/accounts` balance lookup exposed through Telegram `/balance`/`/solde` and API `GET /balance` with optional filters, a local instrument metadata cache, a metadata cache validator CLI, and safe entry/target limit-order payload boundaries are implemented; live order network submission remains intentionally blocked even when metadata is available.
 - Deployment: Dockerfile, Docker Compose, GHCR publish workflow, and deployment documentation are in place; runtime secrets stay in local `.env`.
 - GitHub: dedicated public repository created and initial code pushed to `https://github.com/supermedi/kraken-telegram-gateway`.
-- Verification baseline: `python3 -m pytest -q` was last reported passing with 74 tests on 2026-08-16.
+- Verification baseline: `python3 -m pytest -q` was last reported passing with 79 tests on 2026-08-16.
 
 ## Guardrails
 
@@ -38,9 +38,46 @@ The hourly isolated cron must use this file as the handoff point between runs:
 2. Feed the instrument metadata validator with an operator-reviewed Kraken Futures cache, then mount it via `KRAKEN_INSTRUMENT_METADATA_PATH` in VPS dry-run.
 3. Add Kraken account-event polling/webhook abstraction for real entry fill detection only after live integration is explicitly approved.
 4. Harden target-submission retry diagnostics further only if mixed blocked/submitted live-integration states need clearer operator feedback.
-5. Extend audit diagnostics only if operators need event-type shortcuts, retention/export, or richer webhook failure visibility.
+5. Extend audit/balance diagnostics only if operators need event-type shortcuts, retention/export, balance freshness, or richer webhook failure visibility.
 
 ## Cycle Log
+
+### 2026-08-16 15:55 UTC - Kraken Balance Auth Retry
+
+- Investigated a persistent Kraken Futures `authenticationError` on `/balance` after the endpoint-path signing fix.
+- Cross-checked Kraken's current Derivatives REST auth docs and a Futures SDK implementation: the code already signs the v3 endpoint path without the `/derivatives` prefix.
+- Hardened the balance request by matching known client headers, trimming configured API key/secret whitespace before signing, using the prepared request method, and retrying the read-only account lookup without `Nonce` only when Kraken specifically returns `authenticationError`.
+- Documented that `/balance` requires Futures API keys, not Spot keys, and that the base URL must match live vs demo Futures credentials.
+- Kept Kraken safety guardrails unchanged: this only touches read-only account lookup; no order submission path or live trading gate was enabled.
+
+Files changed: `kraken_telegram_gateway/gateway/kraken.py`, `tests/test_kraken.py`, `README.md`, `DEV_LOG.md`.
+
+Tests: `python3 -m pytest tests/test_kraken.py -q` -> 17 passed. `python3 -m pytest -q` -> 81 passed, 1 Starlette/TestClient deprecation warning.
+
+### 2026-08-16 15:44 UTC - Balance Filters
+
+- Chose Next Queue item 5: small read-only balance diagnostics improvement for operator visibility.
+- Added optional `account` and `currency` filters to API `GET /balance`, applied locally after the signed read-only Kraken balance lookup.
+- Added matching Telegram filters for `/balance account=... currency=...` and `/solde`, with clean rejection of unsupported arguments.
+- Documented filtered balance examples in `README.md`.
+- Kept Kraken safety guardrails unchanged: no order path was touched, dry-run defaults remain enabled, and Kraken order network submission remains blocked.
+
+Files changed: `kraken_telegram_gateway/gateway/app.py`, `kraken_telegram_gateway/gateway/service.py`, `kraken_telegram_gateway/gateway/telegram.py`, `tests/test_api.py`, `tests/test_telegram.py`, `README.md`, `DEV_LOG.md`.
+
+Tests: `python3 -m pytest tests/test_api.py::test_balance_api_returns_read_only_kraken_balances tests/test_api.py::test_balance_api_filters_by_account_and_currency tests/test_api.py::test_balance_api_rejects_missing_kraken_credentials_cleanly -q` -> 3 passed, 1 Starlette/TestClient deprecation warning. `python3 -m pytest tests/test_telegram.py::test_balance_command_formats_kraken_futures_balances tests/test_telegram.py::test_balance_command_filters_account_and_currency tests/test_telegram.py::test_balance_command_rejects_invalid_filter tests/test_telegram.py::test_solde_alias_reports_missing_kraken_credentials -q` -> 4 passed. `python3 -m compileall -q kraken_telegram_gateway` -> OK. `python3 -m pytest -q` -> 79 passed, 1 Starlette/TestClient deprecation warning.
+
+### 2026-08-16 15:27 UTC - API Balance Endpoint
+
+- Chose a local read-only operator visibility task because VPS Docker validation and operator-reviewed Kraken metadata still require external environment/input.
+- Added API `GET /balance`, reusing the existing Kraken Futures read-only account balance lookup used by Telegram `/balance` and `/solde`.
+- Added an `AccountBalanceResponse` schema so API clients receive stable `account`, `currency`, `balance`, `equity`, `available`, and `margin` fields.
+- Added clean HTTP 400 handling when Kraken credentials are missing or balance lookup preparation is refused, avoiding an internal server error.
+- Documented the new `curl http://localhost:8000/balance` operator check in `README.md`.
+- Kept Kraken safety guardrails unchanged: dry-run defaults remain enabled and no live Kraken order submission path was touched.
+
+Files changed: `kraken_telegram_gateway/gateway/app.py`, `kraken_telegram_gateway/gateway/schemas.py`, `tests/test_api.py`, `README.md`, `DEV_LOG.md`.
+
+Tests: `python3 -m pytest tests/test_api.py -q` -> 15 passed, 1 Starlette/TestClient deprecation warning. `python3 -m pytest -q` -> 76 passed, 1 Starlette/TestClient deprecation warning. `python3 -m compileall -q kraken_telegram_gateway` -> OK. Follow-up targeted check: `python3 -m pytest tests/test_api.py::test_balance_api_returns_read_only_kraken_balances tests/test_api.py::test_balance_api_rejects_missing_kraken_credentials_cleanly -q` -> 2 passed, 1 warning.
 
 ### 2026-08-16 15:16 UTC - Telegram Balance Command
 

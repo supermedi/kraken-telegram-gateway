@@ -42,6 +42,8 @@ def test_futures_signer_matches_derivatives_auth_algorithm():
     headers = signer.build_headers(post_data, "/api/v3/sendorder")
 
     assert headers == {
+        "Content-Type": "application/x-www-form-urlencoded; charset=utf-8",
+        "Accept": "application/json",
         "APIKey": "public-key",
         "Nonce": "1415957147987",
         "Authent": "LV1J80qMEQ6knibZT3MaXYm3nR7UP7GkFR5xPXWsg1KwgVdzBqsu5RekVw43zMKa06Aw37RHwXH65bQKo0SEnQ==",
@@ -121,7 +123,77 @@ def test_account_request_can_be_signed_in_dry_run_with_credentials():
     assert request.endpoint_path == "/api/v3/accounts"
     assert request.post_data == ""
     assert request.headers["APIKey"] == "public-key"
+    assert request.headers["Content-Type"] == "application/x-www-form-urlencoded; charset=utf-8"
+    assert request.headers["Accept"] == "application/json"
     assert "Authent" in request.headers
+
+
+def test_account_request_can_be_signed_without_nonce_for_retry():
+    client = KrakenClient(
+        Settings(
+            dry_run=True,
+            live_trading_enabled=False,
+            kraken_api_key=" public-key ",
+            kraken_api_secret=" dGVzdC1zZWNyZXQ= ",
+            kraken_futures_base_url="https://example.test",
+        )
+    )
+
+    request = client.build_account_request(include_nonce=False)
+
+    assert request.headers["APIKey"] == "public-key"
+    assert "Nonce" not in request.headers
+    assert "Authent" in request.headers
+
+
+def test_fetch_account_balances_retries_without_nonce_on_authentication_error(monkeypatch):
+    calls = []
+
+    class FakeResponse:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self.payload
+
+    def fake_request(method, url, *, headers, timeout):
+        calls.append(headers)
+        if len(calls) == 1:
+            return FakeResponse({"result": "error", "error": "authenticationError"})
+        return FakeResponse(
+            {
+                "result": "success",
+                "accounts": {
+                    "flex": {
+                        "currencies": {
+                            "USDC": {
+                                "quantity": "42",
+                            }
+                        }
+                    }
+                },
+            }
+        )
+
+    monkeypatch.setattr("kraken_telegram_gateway.gateway.kraken.httpx.request", fake_request)
+    client = KrakenClient(
+        Settings(
+            dry_run=True,
+            live_trading_enabled=False,
+            kraken_api_key="public-key",
+            kraken_api_secret="dGVzdC1zZWNyZXQ=",
+            kraken_futures_base_url="https://example.test",
+        )
+    )
+
+    balances = client.fetch_account_balances()
+
+    assert calls[0]["Nonce"]
+    assert "Nonce" not in calls[1]
+    assert balances == [AccountBalance(account="flex", currency="USDC", balance=Decimal("42"))]
 
 
 def test_parse_account_balances_reads_currency_rows():

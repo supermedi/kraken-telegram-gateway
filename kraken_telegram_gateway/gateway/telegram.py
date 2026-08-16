@@ -138,7 +138,8 @@ def dispatch_telegram_text(text: str, session: Session, settings: Settings) -> s
             return format_audit_events(events)
 
         if command in {"/balance", "/solde"}:
-            balances = get_account_balances(settings)
+            filters = _parse_balance_filters(argument)
+            balances = get_account_balances(settings, **filters)
             return format_account_balances(balances)
 
         if command == "/pause":
@@ -155,7 +156,7 @@ def dispatch_telegram_text(text: str, session: Session, settings: Settings) -> s
                 "/status [trade_id], /orders <trade_id> [status=... role=...], "
                 "/trades [limit=5 status=... pair=...], "
                 "/audit [trade_id] [event_type=... limit=5], "
-                "/balance, /pause, /resume.\n"
+                "/balance [account=... currency=...], /pause, /resume.\n"
                 "Exemple: /trade pair=PF_XBTUSD side=buy amount_usdc=100 entry=limit:65000 "
                 "t1=67000:40% t2=69000:40% t3=72000:20%\n"
                 "Exemple court: LINK LONG 25USDC 2x Entry 9.356 Sl 9.298"
@@ -283,4 +284,23 @@ def _parse_audit_filters(argument: str) -> dict:
         raise ValueError("/audit limit must be between 1 and 10")
     if filters["offset"] < 0:
         raise ValueError("/audit offset must be >= 0")
+    return filters
+
+
+def _parse_balance_filters(argument: str) -> dict:
+    filters = {"account": None, "currency": None}
+    if not argument:
+        return filters
+
+    allowed_keys = {"account", "currency"}
+    for token in argument.split():
+        if "=" not in token:
+            raise ValueError("/balance arguments must be key=value")
+        key, value = token.split("=", 1)
+        key = key.lower()
+        if key not in allowed_keys:
+            raise ValueError(f"unsupported /balance argument: {key}")
+        if not value:
+            raise ValueError(f"/balance {key} cannot be empty")
+        filters[key] = value
     return filters

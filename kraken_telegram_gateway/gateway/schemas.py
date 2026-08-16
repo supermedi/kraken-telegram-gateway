@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from kraken_telegram_gateway.gateway.models import AuditEvent, Trade, TradeOrder
@@ -79,3 +81,12 @@ class AuditEventList(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+class AccountBalanceResponse(BaseModel):
+    account: str
+    currency: str
+    balance: Decimal | None = None
+    equity: Decimal | None = None
+    available: Decimal | None = None
+    margin: Decimal | None = None

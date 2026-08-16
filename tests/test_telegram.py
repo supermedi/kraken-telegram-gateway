@@ -239,6 +239,32 @@ def test_balance_command_formats_kraken_futures_balances(monkeypatch):
     assert reply == "Solde Kraken Futures:\n- flex USDC | balance=100 | equity=105 | available=90 | margin=15"
 
 
+def test_balance_command_filters_account_and_currency(monkeypatch):
+    def fake_fetch_account_balances(self):
+        return [
+            AccountBalance(account="flex", currency="USDC", balance=100),
+            AccountBalance(account="cash", currency="USD", balance=25),
+            AccountBalance(account="flex", currency="ETH", balance=2),
+        ]
+
+    monkeypatch.setattr(
+        "kraken_telegram_gateway.gateway.kraken.KrakenClient.fetch_account_balances",
+        fake_fetch_account_balances,
+    )
+
+    with make_session() as session:
+        reply = dispatch_telegram_text("/balance account=FLEX currency=usdc", session, Settings())
+
+    assert reply == "Solde Kraken Futures:\n- flex USDC | balance=100"
+
+
+def test_balance_command_rejects_invalid_filter():
+    with make_session() as session:
+        reply = dispatch_telegram_text("/balance asset=USDC", session, Settings())
+
+    assert reply == "Commande refusee: unsupported /balance argument: asset"
+
+
 def test_solde_alias_reports_missing_kraken_credentials():
     with make_session() as session:
         reply = dispatch_telegram_text("/solde", session, Settings())

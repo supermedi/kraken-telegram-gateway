@@ -6,14 +6,23 @@ from sqlmodel import Session
 
 from kraken_telegram_gateway.gateway.config import Settings, get_settings
 from kraken_telegram_gateway.gateway.db import get_session, init_db
+from kraken_telegram_gateway.gateway.kraken import AccountBalance, KrakenAccountError, KrakenLiveTradingDisabledError
 from kraken_telegram_gateway.gateway.parser import CommandParseError
 from kraken_telegram_gateway.gateway.risk import RiskValidationError
 from kraken_telegram_gateway.gateway.models import OrderRole, OrderStatus, TradeOrder, TradeStatus
-from kraken_telegram_gateway.gateway.schemas import AuditEventList, ConfirmResult, TradeDetail, TradeList, TradePreview
+from kraken_telegram_gateway.gateway.schemas import (
+    AccountBalanceResponse,
+    AuditEventList,
+    ConfirmResult,
+    TradeDetail,
+    TradeList,
+    TradePreview,
+)
 from kraken_telegram_gateway.gateway.service import (
     cancel_trade,
     confirm_trade,
     create_trade_preview,
+    get_account_balances,
     get_trade_detail,
     get_trade_orders,
     list_audit_events,
@@ -45,6 +54,18 @@ class CommandRequest(BaseModel):
 @app.get("/health")
 def health(settings: Settings = Depends(get_settings)) -> dict[str, bool | str]:
     return {"ok": True, "dry_run": settings.dry_run, "live_ready": settings.can_live_trade}
+
+
+@app.get("/balance", response_model=list[AccountBalanceResponse])
+def get_balance(
+    account: str | None = None,
+    currency: str | None = None,
+    settings: Settings = Depends(get_settings),
+) -> list[AccountBalance]:
+    try:
+        return get_account_balances(settings, account=account, currency=currency)
+    except (KrakenAccountError, KrakenLiveTradingDisabledError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/commands/trade", response_model=TradePreview)

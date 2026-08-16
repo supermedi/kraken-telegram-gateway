@@ -303,8 +303,20 @@ def list_audit_events(
     return AuditEventList(items=list(events), total=total, limit=limit, offset=offset)
 
 
-def get_account_balances(settings: Settings) -> list[AccountBalance]:
-    return KrakenClient(settings).fetch_account_balances()
+def get_account_balances(
+    settings: Settings,
+    *,
+    account: str | None = None,
+    currency: str | None = None,
+) -> list[AccountBalance]:
+    balances = KrakenClient(settings).fetch_account_balances()
+    if account:
+        wanted_account = account.lower()
+        balances = [balance for balance in balances if balance.account.lower() == wanted_account]
+    if currency:
+        wanted_currency = currency.upper()
+        balances = [balance for balance in balances if balance.currency.upper() == wanted_currency]
+    return balances
 
 
 def format_trade_summary(trade: Trade) -> str:

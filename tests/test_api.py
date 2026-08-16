@@ -1,4 +1,5 @@
 from contextlib import contextmanager
+from decimal import Decimal
 
 from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
@@ -7,6 +8,7 @@ from sqlmodel import Session, SQLModel, create_engine
 from kraken_telegram_gateway.gateway.app import app
 from kraken_telegram_gateway.gateway.config import Settings, get_settings
 from kraken_telegram_gateway.gateway.db import get_session
+from kraken_telegram_gateway.gateway.kraken import AccountBalance
 
 
 @contextmanager
@@ -98,6 +100,77 @@ def test_trade_orders_api_handles_missing_trade():
 
     assert response.status_code == 404
     assert response.json()["detail"] == "Trade not found"
+
+
+def test_balance_api_returns_read_only_kraken_balances(monkeypatch):
+    def fake_fetch_account_balances(self):
+        return [
+            AccountBalance(
+                account="flex",
+                currency="USDC",
+                balance=Decimal("100"),
+                equity=Decimal("105.5"),
+                available=Decimal("90"),
+                margin=None,
+            )
+        ]
+
+    monkeypatch.setattr(
+        "kraken_telegram_gateway.gateway.kraken.KrakenClient.fetch_account_balances",
+        fake_fetch_account_balances,
+    )
+
+    with api_client() as client:
+        response = client.get("/balance")
+
+    assert response.status_code == 200
+    assert response.json() == [
+        {
+            "account": "flex",
+            "currency": "USDC",
+            "balance": "100",
+            "equity": "105.5",
+            "available": "90",
+            "margin": None,
+        }
+    ]
+
+
+def test_balance_api_filters_by_account_and_currency(monkeypatch):
+    def fake_fetch_account_balances(self):
+        return [
+            AccountBalance(account="flex", currency="USDC", balance=Decimal("100")),
+            AccountBalance(account="cash", currency="USD", balance=Decimal("25")),
+            AccountBalance(account="flex", currency="ETH", balance=Decimal("2")),
+        ]
+
+    monkeypatch.setattr(
+        "kraken_telegram_gateway.gateway.kraken.KrakenClient.fetch_account_balances",
+        fake_fetch_account_balances,
+    )
+
+    with api_client() as client:
+        response = client.get("/balance", params={"account": "FLEX", "currency": "usdc"})
+
+    assert response.status_code == 200
+    assert response.json() == [
+        {
+            "account": "flex",
+            "currency": "USDC",
+            "balance": "100",
+            "equity": None,
+            "available": None,
+            "margin": None,
+        }
+    ]
+
+
+def test_balance_api_rejects_missing_kraken_credentials_cleanly():
+    with api_client() as client:
+        response = client.get("/balance")
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Kraken API credentials are required for signed requests."
 
 
 def test_entry_filled_api_marks_entry_filled_and_targets_ready():
