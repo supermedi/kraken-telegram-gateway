@@ -48,6 +48,7 @@ The hourly isolated cron must use this file as the handoff point between runs:
 - Added signed GET request preparation for `/derivatives/api/v3/accounts` that works in dry-run when Kraken API credentials are configured.
 - Added flexible account-balance parsing and Telegram formatting for balance, equity, available, and margin fields.
 - Documented the new commands in `README.md`.
+- Follow-up fix: sign Kraken Futures requests with endpoint paths like `/api/v3/accounts` while still calling URLs under `/derivatives/api/v3/...`; this matches Kraken's REST auth docs and fixes `authenticationError` on `/balance`.
 
 Tests: `python3 -m pytest -q` -> 74 passed, 1 Starlette/TestClient deprecation warning.
 

@@ -39,12 +39,12 @@ def test_futures_signer_matches_derivatives_auth_algorithm():
     )
     post_data = "symbol=PF_XBTUSD&orderType=lmt&side=buy&size=1&limitPrice=65000"
 
-    headers = signer.build_headers(post_data, "/derivatives/api/v3/sendorder")
+    headers = signer.build_headers(post_data, "/api/v3/sendorder")
 
     assert headers == {
         "APIKey": "public-key",
         "Nonce": "1415957147987",
-        "Authent": "RAM57StAIJCucaleKwNVMp+oy33wAt0eVE3OcsIs44NLZQVqZvSEpcT2VafIUGJptGLOQcOgDgKpBgzxd2jv6Q==",
+        "Authent": "LV1J80qMEQ6knibZT3MaXYm3nR7UP7GkFR5xPXWsg1KwgVdzBqsu5RekVw43zMKa06Aw37RHwXH65bQKo0SEnQ==",
     }
 
 
@@ -61,7 +61,7 @@ def test_private_request_preparation_is_blocked_in_dry_run():
     with pytest.raises(KrakenLiveTradingDisabledError, match="dry-run"):
         client.build_private_request(
             "POST",
-            "/derivatives/api/v3/sendorder",
+            "/api/v3/sendorder",
             {"symbol": "PF_XBTUSD"},
         )
 
@@ -79,7 +79,7 @@ def test_private_request_preparation_signs_only_when_live_gate_is_open():
 
     request = client.build_private_request(
         "post",
-        "/derivatives/api/v3/sendorder",
+        "/api/v3/sendorder",
         {
             "symbol": "PF_XBTUSD",
             "orderType": "lmt",
@@ -93,7 +93,8 @@ def test_private_request_preparation_signs_only_when_live_gate_is_open():
 
     assert request.method == "POST"
     assert request.url == "https://example.test/derivatives/api/v3/sendorder"
-    assert request.endpoint_path == "/derivatives/api/v3/sendorder"
+    assert request.request_path == "/derivatives/api/v3/sendorder"
+    assert request.endpoint_path == "/api/v3/sendorder"
     assert request.post_data == "symbol=PF_XBTUSD&orderType=lmt&side=buy&size=1&limitPrice=65000&reduceOnly=false"
     assert request.headers["APIKey"] == "public-key"
     assert "Nonce" in request.headers
@@ -116,7 +117,8 @@ def test_account_request_can_be_signed_in_dry_run_with_credentials():
 
     assert request.method == "GET"
     assert request.url == "https://example.test/derivatives/api/v3/accounts"
-    assert request.endpoint_path == "/derivatives/api/v3/accounts"
+    assert request.request_path == "/derivatives/api/v3/accounts"
+    assert request.endpoint_path == "/api/v3/accounts"
     assert request.post_data == ""
     assert request.headers["APIKey"] == "public-key"
     assert "Authent" in request.headers

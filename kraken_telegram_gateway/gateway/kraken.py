@@ -31,6 +31,7 @@ class KrakenAccountError(RuntimeError):
 class KrakenAuthenticatedRequest:
     method: str
     url: str
+    request_path: str
     endpoint_path: str
     post_data: str
     headers: dict[str, str]
@@ -105,8 +106,9 @@ class KrakenFuturesSigner:
 
 
 class KrakenClient:
-    SEND_ORDER_PATH = "/derivatives/api/v3/sendorder"
-    ACCOUNTS_PATH = "/derivatives/api/v3/accounts"
+    API_PREFIX = "/derivatives"
+    SEND_ORDER_PATH = "/api/v3/sendorder"
+    ACCOUNTS_PATH = "/api/v3/accounts"
 
     def __init__(
         self,
@@ -275,7 +277,8 @@ class KrakenClient:
         signer = KrakenFuturesSigner(self.settings.kraken_api_key, self.settings.kraken_api_secret)
         return KrakenAuthenticatedRequest(
             method=method.upper(),
-            url=f"{self.settings.kraken_futures_base_url.rstrip('/')}{endpoint_path}",
+            url=f"{self.settings.kraken_futures_base_url.rstrip('/')}{self.API_PREFIX}{endpoint_path}",
+            request_path=f"{self.API_PREFIX}{endpoint_path}",
             endpoint_path=endpoint_path,
             post_data=post_data,
             headers=signer.build_headers(post_data, endpoint_path),
