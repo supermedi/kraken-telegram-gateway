@@ -10,7 +10,7 @@ Le montant utilisateur reste exprime en USDC. Pour un ordre live Kraken Futures,
 
 Par defaut, un trade sans stop loss reste autorise mais affiche un avertissement. Pour imposer une politique plus stricte, definir `REQUIRE_STOP_LOSS_FOR_CONFIRMATION=true` : la preview reste possible, mais `/confirm` rejette le trade sans toucher aux ordres planifies ni a Kraken.
 
-Un cache local optionnel peut etre fourni via `KRAKEN_INSTRUMENT_METADATA_PATH`. Format accepte :
+Par defaut, le bot recupere les metadonnees d'instrument depuis l'endpoint public Kraken Futures `/derivatives/api/v3/instruments` avant de preparer un payload live. Un cache local optionnel peut aussi etre fourni via `KRAKEN_INSTRUMENT_METADATA_PATH`; quand il est defini et contient le symbole demande, il est prioritaire sur l'endpoint public. Format accepte :
 
 ```json
 {
@@ -24,7 +24,7 @@ Un cache local optionnel peut etre fourni via `KRAKEN_INSTRUMENT_METADATA_PATH`.
 }
 ```
 
-Ces valeurs doivent etre verifiees avant usage. Meme avec ce fichier et la gate live ouverte, la V1 bloque encore la soumission reseau Kraken.
+Ces valeurs doivent etre verifiees avant usage si un cache local est fourni. Meme avec des metadonnees valides et la gate live ouverte, la V1 bloque encore la soumission reseau Kraken.
 
 Validation locale du cache avant de le monter sur le VPS :
 

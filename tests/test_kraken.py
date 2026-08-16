@@ -12,10 +12,16 @@ from kraken_telegram_gateway.gateway.kraken import (
     KrakenLiveTradingDisabledError,
     KrakenOrderPayloadError,
     LocalInstrumentMetadataProvider,
+    PublicKrakenInstrumentMetadataProvider,
     parse_account_balances,
 )
 from kraken_telegram_gateway.gateway.models import Trade
 from kraken_telegram_gateway.gateway.models import TradeOrder
+
+
+class MissingInstrumentMetadataProvider:
+    def get(self, symbol: str):
+        return None
 
 
 def make_trade() -> Trade:
@@ -390,6 +396,45 @@ def test_local_instrument_metadata_provider_loads_cached_json(tmp_path):
     assert cached_instrument == instrument
 
 
+def test_public_instrument_metadata_provider_loads_and_caches_kraken_instruments(monkeypatch):
+    calls = []
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "result": "success",
+                "instruments": [
+                    {
+                        "symbol": "PF_LINKUSD",
+                        "contractSize": 1,
+                        "contractValueTradePrecision": 1,
+                    }
+                ],
+            }
+
+    def fake_get(url, timeout):
+        calls.append((url, timeout))
+        return FakeResponse()
+
+    monkeypatch.setattr("kraken_telegram_gateway.gateway.kraken.httpx.get", fake_get)
+    provider = PublicKrakenInstrumentMetadataProvider("https://futures.kraken.com")
+
+    instrument = provider.get("pf_linkusd")
+    cached_instrument = provider.get("PF_LINKUSD")
+
+    assert instrument == InstrumentMetadata(
+        symbol="PF_LINKUSD",
+        contract_value_usdc=Decimal("1"),
+        size_step=Decimal("0.1"),
+        min_size=Decimal("0.1"),
+    )
+    assert cached_instrument == instrument
+    assert calls == [("https://futures.kraken.com/derivatives/api/v3/instruments", 10)]
+
+
 def test_live_entry_submission_is_blocked_until_instrument_metadata_exists():
     client = KrakenClient(
         Settings(
@@ -397,7 +442,8 @@ def test_live_entry_submission_is_blocked_until_instrument_metadata_exists():
             live_trading_enabled=True,
             kraken_api_key="public-key",
             kraken_api_secret="dGVzdC1zZWNyZXQ=",
-        )
+        ),
+        instrument_provider=MissingInstrumentMetadataProvider(),
     )
 
     result = client.submit_entry_order(make_trade())

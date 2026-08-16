@@ -19,7 +19,7 @@ The hourly isolated cron must use this file as the handoff point between runs:
 - Telegram: webhook endpoint, command dispatcher, user allowlist, webhook secret, pause/resume, retry idempotency, `/balance`/`/solde` read-only Kraken Futures account balance lookup with `account`/`currency` plus `asset`/`devise` currency aliases, idempotent `/cancel <trade_id>`, `/status <trade_id>` trade visibility, `/orders <trade_id>` compact order visibility with case-insensitive `status`/`role` filters, `/trades` recent-list visibility with `limit`/`offset`/case-insensitive `status`/`pair`/`side` filters, `/audit` safety-event diagnostics with case-insensitive `event_type`/`type`/`event` filters, `/audit_types` and `/audit-types` event-type counters, idempotent `/entry_filled <trade_id>`/`/entry-filled <trade_id>` local lifecycle tracking, and idempotent `/submit_targets <trade_id>`/`/submit-targets <trade_id>` dry-run target submission are implemented.
 - Risk policy: stop loss is optional by default with a warning; `REQUIRE_STOP_LOSS_FOR_CONFIRMATION=true` rejects confirmation of no-stop trades without touching planned orders or Kraken.
 - Trading model: trade previews are persisted with planned entry orders and reduce-only target exit orders; repeated cancellation retries are no-ops that avoid duplicate audit events; confirmed entries can be marked `filled`, which moves target exits to `ready_to_submit`; ready targets can then be marked `dry_run_submitted` with local external ids and no Kraken network submission; repeated target submission retries are no-ops that preserve existing ids and avoid duplicate audit events; `/trades` lists recent trades with `limit`, `offset`, `status`, `pair`, and `side` filters; `/trades/{trade_id}` returns the trade plus attached orders; `/trades/{trade_id}/orders` returns attached orders with optional `status` and `role` filters; `/audit` lists recent audit events with `trade_id` and `event_type` filters; `/audit/event-types` returns local audit event-type counters.
-- Kraken Futures: authenticated REST signing, private request preparation, read-only `/derivatives/api/v3/accounts` balance lookup exposed through Telegram `/balance`/`/solde` and API `GET /balance` with optional filters, a local instrument metadata cache, a metadata cache validator CLI, and safe entry/target limit-order payload boundaries are implemented; live order network submission remains intentionally blocked even when metadata is available.
+- Kraken Futures: authenticated REST signing, private request preparation, read-only `/derivatives/api/v3/accounts` balance lookup exposed through Telegram `/balance`/`/solde` and API `GET /balance` with optional filters, a local-first/public-fallback instrument metadata provider, a metadata cache validator CLI, and safe entry/target limit-order payload boundaries are implemented; live order network submission remains intentionally blocked even when metadata is available.
 - Deployment: Dockerfile, Docker Compose, GHCR publish workflow, final public image name `ghcr.io/supermedi/kraken-telegram-gateway:latest`, and deployment documentation are in place; runtime secrets stay in local `.env`.
 - GitHub: dedicated public repository created and initial code pushed to `https://github.com/supermedi/kraken-telegram-gateway`.
 - Verification baseline: `python3 -m pytest -q` was last reported passing with 93 tests on 2026-08-16.
@@ -39,12 +39,23 @@ The hourly isolated cron must use this file as the handoff point between runs:
 ## Next Queue
 
 1. Validate Docker build in the target VPS environment, then confirm GHCR pull/run health against `ghcr.io/supermedi/kraken-telegram-gateway:latest`.
-2. Feed the instrument metadata validator with an operator-reviewed Kraken Futures cache, then mount it via `KRAKEN_INSTRUMENT_METADATA_PATH` in VPS dry-run.
+2. Validate Docker/GHCR deployment on the VPS with the public Kraken instrument metadata fallback enabled.
 3. Add Kraken account-event polling/webhook abstraction for real entry fill detection only after live integration is explicitly approved.
 4. Harden target-submission retry diagnostics further only if mixed blocked/submitted live-integration states need clearer operator feedback.
 5. Extend audit/balance/Telegram diagnostics only if operators need retention/export, balance freshness, richer webhook failure visibility, or additional mobile command ergonomics.
 
 ## Cycle Log
+
+### 2026-08-16 23:18 UTC - Public Instrument Metadata Fallback
+
+- Added a public Kraken Futures instrument metadata provider that reads `/derivatives/api/v3/instruments` when no local `KRAKEN_INSTRUMENT_METADATA_PATH` entry exists for the symbol.
+- Mapped Kraken public fields `contractSize` and `contractValueTradePrecision` into the internal contract sizing metadata used before live request preparation.
+- Kept the local metadata cache as the first priority when configured, and preserved the V1 network-submission block after payload preparation.
+- Documented that the cache is now optional and only overrides the public metadata fallback.
+
+Files changed: `kraken_telegram_gateway/gateway/kraken.py`, `tests/test_kraken.py`, `README.md`, `DEV_LOG.md`.
+
+Tests: `python3 -m pytest tests/test_kraken.py -q` -> 19 passed. `python3 -m pytest tests/test_metadata.py -q` -> 4 passed.
 
 ### 2026-08-16 23:05 UTC - Hide Empty Balance Rows
 

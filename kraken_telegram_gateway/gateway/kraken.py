@@ -84,6 +84,45 @@ class LocalInstrumentMetadataProvider:
         return self._cache
 
 
+class PublicKrakenInstrumentMetadataProvider:
+    INSTRUMENTS_PATH = "/api/v3/instruments"
+
+    def __init__(self, base_url: str):
+        self.base_url = base_url.rstrip("/")
+        self._cache: object | None = None
+
+    def get(self, symbol: str) -> InstrumentMetadata | None:
+        raw = find_instrument_metadata_payload(self._load(), symbol)
+        if raw is None:
+            return None
+        return parse_public_instrument_metadata(raw, symbol)
+
+    def _load(self) -> object:
+        if self._cache is None:
+            url = f"{self.base_url}{KrakenClient.API_PREFIX}{self.INSTRUMENTS_PATH}"
+            try:
+                response = httpx.get(url, timeout=10)
+                response.raise_for_status()
+                self._cache = response.json()
+            except httpx.HTTPError as exc:
+                raise KrakenOrderPayloadError(f"Kraken instrument metadata request failed: {exc}") from exc
+            except ValueError as exc:
+                raise KrakenOrderPayloadError("Kraken instrument metadata response is not valid JSON.") from exc
+        return self._cache
+
+
+class InstrumentMetadataProvider:
+    def __init__(self, settings: Settings):
+        self.local_provider = LocalInstrumentMetadataProvider(settings.kraken_instrument_metadata_path)
+        self.public_provider = PublicKrakenInstrumentMetadataProvider(settings.kraken_futures_base_url)
+
+    def get(self, symbol: str) -> InstrumentMetadata | None:
+        local = self.local_provider.get(symbol)
+        if local is not None:
+            return local
+        return self.public_provider.get(symbol)
+
+
 class KrakenFuturesSigner:
     def __init__(self, api_key: str, api_secret: str, nonce_factory: Callable[[], str] | None = None):
         self.api_key = api_key.strip()
@@ -121,12 +160,10 @@ class KrakenClient:
     def __init__(
         self,
         settings: Settings,
-        instrument_provider: LocalInstrumentMetadataProvider | None = None,
+        instrument_provider: InstrumentMetadataProvider | LocalInstrumentMetadataProvider | None = None,
     ):
         self.settings = settings
-        self.instrument_provider = instrument_provider or LocalInstrumentMetadataProvider(
-            settings.kraken_instrument_metadata_path
-        )
+        self.instrument_provider = instrument_provider or InstrumentMetadataProvider(settings)
 
     def submit_entry_order(self, trade: Trade) -> dict[str, str]:
         if not self.settings.can_live_trade:
@@ -413,6 +450,22 @@ def parse_instrument_metadata(raw: Mapping[str, object], symbol: str) -> Instrum
         raise KrakenOrderPayloadError(f"instrument metadata is missing required field: {exc.args[0]}") from exc
     except Exception as exc:
         raise KrakenOrderPayloadError("instrument metadata contains invalid decimal values") from exc
+
+
+def parse_public_instrument_metadata(raw: Mapping[str, object], symbol: str) -> InstrumentMetadata:
+    try:
+        precision = int(str(raw["contractValueTradePrecision"]))
+        size_step = Decimal("1").scaleb(-precision)
+        return InstrumentMetadata(
+            symbol=str(raw.get("symbol") or symbol).upper(),
+            contract_value_usdc=Decimal(str(raw["contractSize"])),
+            size_step=size_step,
+            min_size=size_step,
+        )
+    except KeyError as exc:
+        raise KrakenOrderPayloadError(f"Kraken instrument metadata is missing required field: {exc.args[0]}") from exc
+    except Exception as exc:
+        raise KrakenOrderPayloadError("Kraken instrument metadata contains invalid decimal values") from exc
 
 
 def format_decimal(value: Decimal) -> str:
