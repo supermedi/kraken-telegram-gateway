@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import html
+import re
+
 import httpx
 from sqlmodel import Session
 
@@ -185,12 +188,26 @@ def format_trade_action_commands(trade_id: str) -> str:
     return f"```bash\n/confirm {trade_id}\n/cancel {trade_id}\n```"
 
 
+def render_telegram_html(text: str) -> str:
+    parts = []
+    cursor = 0
+    for match in re.finditer(r"```(?:[A-Za-z0-9_-]+)?\n(.*?)```", text, flags=re.DOTALL):
+        parts.append(html.escape(text[cursor : match.start()]))
+        parts.append(f"<pre>{html.escape(match.group(1).rstrip())}</pre>")
+        cursor = match.end()
+    parts.append(html.escape(text[cursor:]))
+    return "".join(parts)
+
+
 async def send_telegram_message(chat_id: int | str, text: str, settings: Settings) -> None:
     if not settings.telegram_bot_token:
         raise TelegramUpdateError("TELEGRAM_BOT_TOKEN is not configured.")
     url = f"https://api.telegram.org/bot{settings.telegram_bot_token}/sendMessage"
     async with httpx.AsyncClient(timeout=10) as client:
-        response = await client.post(url, json={"chat_id": chat_id, "text": text, "parse_mode": "Markdown"})
+        response = await client.post(
+            url,
+            json={"chat_id": chat_id, "text": render_telegram_html(text), "parse_mode": "HTML"},
+        )
         response.raise_for_status()
 
 

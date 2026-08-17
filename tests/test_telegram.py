@@ -11,7 +11,12 @@ from kraken_telegram_gateway.gateway.models import (
     Trade,
     TradeOrder,
 )
-from kraken_telegram_gateway.gateway.telegram import dispatch_telegram_text, handle_telegram_update, send_telegram_message
+from kraken_telegram_gateway.gateway.telegram import (
+    dispatch_telegram_text,
+    handle_telegram_update,
+    render_telegram_html,
+    send_telegram_message,
+)
 
 
 def make_session() -> Session:
@@ -37,8 +42,14 @@ def test_trade_message_creates_preview_and_confirm_hint():
     assert reply.endswith("```")
 
 
+def test_render_telegram_html_preserves_code_block_without_markdown_underscores():
+    rendered = render_telegram_html("Pair PF_XBTUSD\n```bash\n/confirm trade-1\n```")
+
+    assert rendered == "Pair PF_XBTUSD\n<pre>/confirm trade-1</pre>"
+
+
 @pytest.mark.anyio
-async def test_send_telegram_message_enables_markdown_parse_mode(monkeypatch):
+async def test_send_telegram_message_enables_html_parse_mode(monkeypatch):
     calls = []
 
     class FakeResponse:
@@ -72,8 +83,8 @@ async def test_send_telegram_message_enables_markdown_parse_mode(monkeypatch):
             "https://api.telegram.org/bottoken/sendMessage",
             {
                 "chat_id": 123,
-                "text": "```bash\n/confirm trade-1\n```",
-                "parse_mode": "Markdown",
+                "text": "<pre>/confirm trade-1</pre>",
+                "parse_mode": "HTML",
             },
             10,
         )
