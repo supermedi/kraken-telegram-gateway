@@ -11,7 +11,7 @@ from kraken_telegram_gateway.gateway import app as app_module
 from kraken_telegram_gateway.gateway.app import app
 from kraken_telegram_gateway.gateway.config import Settings, get_settings
 from kraken_telegram_gateway.gateway.db import get_session
-from kraken_telegram_gateway.gateway.kraken import AccountBalance
+from kraken_telegram_gateway.gateway.kraken import AccountBalance, KrakenFill
 from kraken_telegram_gateway.gateway.scalping import MarketSnapshot
 
 
@@ -234,6 +234,75 @@ def test_scalp_session_api_creates_and_stops_paper_session():
     assert report_response.json()["max_drawdown"] == 0
     assert stop_response.status_code == 200
     assert stop_response.json()["status"] == "stopped"
+
+
+def test_scalp_sync_fills_api_marks_live_entry_filled(monkeypatch):
+    def fake_submit_scalp_entry_order(self, scalp_session, side, price):
+        return {
+            "mode": "live",
+            "external_order_id": "OID-SCALP-1",
+            "message": "Live Kraken scalp entry order submitted.",
+        }
+
+    async def fake_collect_kraken_futures_snapshots(product_id, *, limit, timeout_seconds):
+        return [
+            MarketSnapshot(
+                datetime.fromisoformat("2026-08-17T00:00:01+00:00"),
+                bid=10,
+                ask=10.01,
+                bid_size=700,
+                ask_size=300,
+                volume_ratio=1.6,
+            )
+        ]
+
+    def fake_fetch_recent_fills(self):
+        return [
+            KrakenFill(
+                order_id="OID-SCALP-1",
+                symbol="PF_LINKUSD",
+                side="buy",
+                price=Decimal("10.02"),
+            )
+        ]
+
+    monkeypatch.setattr(
+        "kraken_telegram_gateway.gateway.kraken.KrakenClient.submit_scalp_entry_order",
+        fake_submit_scalp_entry_order,
+    )
+    monkeypatch.setattr(
+        "kraken_telegram_gateway.gateway.service.collect_kraken_futures_snapshots",
+        fake_collect_kraken_futures_snapshots,
+    )
+    monkeypatch.setattr(
+        "kraken_telegram_gateway.gateway.kraken.KrakenClient.fetch_recent_fills",
+        fake_fetch_recent_fills,
+    )
+    settings = Settings(
+        scalp_live_enabled=True,
+        scalp_live_max_amount_usdc=25,
+        dry_run=False,
+        live_trading_enabled=True,
+        kraken_api_key="public-key",
+        kraken_api_secret="dGVzdC1zZWNyZXQ=",
+        allowed_pairs="PF_LINKUSD",
+    )
+
+    with api_client(settings) as client:
+        start_response = client.post(
+            "/commands/scalp-start",
+            json={"text": "/scalp_start pair=PF_LINKUSD amount_usdc=10 mode=live side=buy duration=60m max_hold=5m"},
+        )
+        session_id = start_response.json()["session_id"]
+        scheduler_response = client.post("/scalp/scheduler/tick-kraken")
+        sync_response = client.post(f"/scalp/{session_id}/sync-fills")
+        detail_response = client.get(f"/scalp/{session_id}")
+
+    assert start_response.status_code == 200
+    assert scheduler_response.status_code == 200
+    assert sync_response.status_code == 200
+    assert sync_response.json()["filled"] == 1
+    assert detail_response.json()["trades"][0]["status"] == "live_entry_filled"
 
 
 def test_scalp_scheduler_tick_reports_active_sessions_without_market_data_provider():

@@ -154,6 +154,15 @@ class ScalpSessionResult(BaseModel):
     message: str
 
 
+class ScalpFillSyncResult(BaseModel):
+    session_id: str
+    status: str
+    scanned: int
+    filled: int
+    skipped: int
+    message: str
+
+
 class ScalpSessionReport(BaseModel):
     session_id: str
     pair: str

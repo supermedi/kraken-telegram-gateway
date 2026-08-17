@@ -9,7 +9,12 @@ from sqlmodel import Session
 
 from kraken_telegram_gateway.gateway.config import Settings, get_settings
 from kraken_telegram_gateway.gateway.db import engine, get_session, init_db
-from kraken_telegram_gateway.gateway.kraken import AccountBalance, KrakenAccountError, KrakenLiveTradingDisabledError
+from kraken_telegram_gateway.gateway.kraken import (
+    AccountBalance,
+    KrakenAccountError,
+    KrakenAccountEventError,
+    KrakenLiveTradingDisabledError,
+)
 from kraken_telegram_gateway.gateway.parser import CommandParseError
 from kraken_telegram_gateway.gateway.risk import RiskValidationError
 from kraken_telegram_gateway.gateway.models import OrderRole, OrderStatus, TradeOrder, TradeStatus
@@ -18,6 +23,7 @@ from kraken_telegram_gateway.gateway.schemas import (
     AuditEventList,
     AuditEventTypeList,
     ConfirmResult,
+    ScalpFillSyncResult,
     ScalpSchedulerResult,
     ScalpSessionDetail,
     ScalpSessionReport,
@@ -44,6 +50,7 @@ from kraken_telegram_gateway.gateway.service import (
     run_active_scalp_paper_sessions,
     start_scalp_session,
     stop_scalp_session,
+    sync_scalp_entry_fills,
     submit_ready_targets,
 )
 from kraken_telegram_gateway.gateway.telegram import (
@@ -149,6 +156,18 @@ def get_scalp_report(session_id: str, session: Session = Depends(get_session)) -
     if report is None:
         raise HTTPException(status_code=404, detail="Scalp session not found")
     return report
+
+
+@app.post("/scalp/{session_id}/sync-fills", response_model=ScalpFillSyncResult)
+def sync_scalp_fills(
+    session_id: str,
+    session: Session = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> ScalpFillSyncResult:
+    try:
+        return sync_scalp_entry_fills(session_id, session, settings)
+    except (KrakenAccountEventError, KrakenLiveTradingDisabledError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/scalp/scheduler/tick", response_model=ScalpSchedulerResult)

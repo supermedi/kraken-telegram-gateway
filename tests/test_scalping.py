@@ -1,10 +1,13 @@
 from datetime import timedelta
+from decimal import Decimal
 import json
 
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from kraken_telegram_gateway.gateway.config import Settings
+from kraken_telegram_gateway.gateway.kraken import KrakenFill
 from kraken_telegram_gateway.gateway.models import ScalpSession, ScalpSessionStatus, ScalpSignal, ScalpTrade, ScalpTradeStatus
+from kraken_telegram_gateway.gateway.models import AuditEvent
 from kraken_telegram_gateway.gateway.scalping import MarketSnapshot
 from kraken_telegram_gateway.gateway.scalp_replay import (
     load_market_snapshots,
@@ -17,6 +20,7 @@ from kraken_telegram_gateway.gateway.service import (
     run_scalp_live_snapshots,
     run_scalp_paper_snapshots,
     start_scalp_session,
+    sync_scalp_entry_fills,
 )
 
 
@@ -228,6 +232,71 @@ def test_scalp_live_runner_submits_entry_order_when_signal_passes(monkeypatch):
     assert trades[0].status == ScalpTradeStatus.LIVE_SUBMITTED
     assert trades[0].external_order_id == "OID-SCALP-1"
     assert signals[0].scalp_trade_id == trades[0].id
+
+
+def test_sync_scalp_entry_fills_marks_live_submitted_trade_filled(monkeypatch):
+    def fake_fetch_recent_fills(self):
+        return [
+            KrakenFill(
+                order_id="OID-SCALP-1",
+                symbol="PF_LINKUSD",
+                side="buy",
+                price=Decimal("10.02"),
+                size=Decimal("1.5"),
+                fill_id="fill-1",
+                fill_time="2026-08-17T21:50:00.000Z",
+            )
+        ]
+
+    monkeypatch.setattr(
+        "kraken_telegram_gateway.gateway.kraken.KrakenClient.fetch_recent_fills",
+        fake_fetch_recent_fills,
+    )
+    settings = Settings(
+        kraken_api_key="public-key",
+        kraken_api_secret="dGVzdC1zZWNyZXQ=",
+    )
+    with make_session() as session:
+        scalp_session = ScalpSession(
+            id="scalp-live-1",
+            pair="PF_LINKUSD",
+            side_mode="buy",
+            amount_usdc=10,
+            leverage=1,
+            duration_seconds=3600,
+            max_hold_seconds=300,
+            max_losses=1,
+            min_net_pnl=1,
+            mode="live",
+            status=ScalpSessionStatus.LIVE_ACTIVE,
+        )
+        trade = ScalpTrade(
+            id="scalp-trade-1",
+            session_id=scalp_session.id,
+            pair="PF_LINKUSD",
+            side="buy",
+            amount_usdc=10,
+            leverage=1,
+            entry_price=10.01,
+            status=ScalpTradeStatus.LIVE_SUBMITTED,
+            external_order_id="OID-SCALP-1",
+        )
+        session.add(scalp_session)
+        session.add(trade)
+        session.commit()
+
+        result = sync_scalp_entry_fills(scalp_session.id, session, settings)
+        refreshed_trade = session.get(ScalpTrade, trade.id)
+        audit = session.exec(select(AuditEvent).where(AuditEvent.event_type == "scalp_live_entry_filled")).one()
+
+    assert result.scanned == 1
+    assert result.filled == 1
+    assert result.skipped == 0
+    assert refreshed_trade is not None
+    assert refreshed_trade.status == ScalpTradeStatus.LIVE_ENTRY_FILLED
+    assert refreshed_trade.entry_price == 10.02
+    assert refreshed_trade.opened_at.isoformat() == "2026-08-17T21:50:00"
+    assert "OID-SCALP-1" in audit.message
 
 
 def test_scalp_replay_runs_offline_report_from_json_snapshots(tmp_path):

@@ -6,6 +6,7 @@ from kraken_telegram_gateway.gateway.config import Settings
 from kraken_telegram_gateway.gateway.kraken import (
     AccountBalance,
     InstrumentMetadata,
+    KrakenFill,
     KrakenAccountError,
     KrakenClient,
     KrakenFuturesSigner,
@@ -14,6 +15,7 @@ from kraken_telegram_gateway.gateway.kraken import (
     LocalInstrumentMetadataProvider,
     PublicKrakenInstrumentMetadataProvider,
     parse_account_balances,
+    parse_kraken_fills,
 )
 from kraken_telegram_gateway.gateway.models import Trade
 from kraken_telegram_gateway.gateway.models import TradeOrder
@@ -271,6 +273,87 @@ def test_parse_account_balances_reads_currency_rows():
 def test_parse_account_balances_rejects_error_result():
     with pytest.raises(KrakenAccountError, match="not successful"):
         parse_account_balances({"result": "error", "error": "api key invalid"})
+
+
+def test_parse_kraken_fills_reads_recent_fill_rows():
+    fills = parse_kraken_fills(
+        {
+            "result": "success",
+            "fills": [
+                {
+                    "fill_id": "fill-1",
+                    "symbol": "PF_LINKUSD",
+                    "side": "buy",
+                    "order_id": "OID-SCALP-1",
+                    "size": "12.3",
+                    "price": "9.42",
+                    "fillTime": "2026-08-17T21:50:00.000Z",
+                }
+            ],
+        }
+    )
+
+    assert fills == [
+        KrakenFill(
+            order_id="OID-SCALP-1",
+            symbol="PF_LINKUSD",
+            side="buy",
+            price=Decimal("9.42"),
+            size=Decimal("12.3"),
+            fill_id="fill-1",
+            fill_time="2026-08-17T21:50:00.000Z",
+        )
+    ]
+
+
+def test_fetch_recent_fills_uses_read_only_signed_endpoint_in_dry_run(monkeypatch):
+    calls = []
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "result": "success",
+                "fills": [
+                    {
+                        "order_id": "OID-SCALP-1",
+                        "symbol": "PF_LINKUSD",
+                        "side": "buy",
+                        "price": "9.42",
+                    }
+                ],
+            }
+
+    def fake_request(method, url, *, headers, timeout):
+        calls.append((method, url, headers, timeout))
+        return FakeResponse()
+
+    monkeypatch.setattr("kraken_telegram_gateway.gateway.kraken.httpx.request", fake_request)
+    client = KrakenClient(
+        Settings(
+            dry_run=True,
+            live_trading_enabled=False,
+            kraken_api_key="public-key",
+            kraken_api_secret="dGVzdC1zZWNyZXQ=",
+            kraken_futures_base_url="https://example.test",
+        )
+    )
+
+    fills = client.fetch_recent_fills()
+
+    assert fills[0].order_id == "OID-SCALP-1"
+    assert calls == [
+        (
+            "GET",
+            "https://example.test/derivatives/api/v3/fills",
+            calls[0][2],
+            10,
+        )
+    ]
+    assert calls[0][2]["APIKey"] == "public-key"
+    assert "Authent" in calls[0][2]
 
 
 def test_dry_run_entry_submission_does_not_require_valid_kraken_secret():

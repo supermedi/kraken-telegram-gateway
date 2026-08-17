@@ -39,6 +39,10 @@ class KrakenOrderCancellationError(RuntimeError):
     """Raised when Kraken rejects or fails an order cancellation."""
 
 
+class KrakenAccountEventError(RuntimeError):
+    """Raised when Kraken account events cannot be fetched or parsed."""
+
+
 @dataclass(frozen=True)
 class KrakenAuthenticatedRequest:
     method: str
@@ -65,6 +69,17 @@ class AccountBalance:
     equity: Decimal | None = None
     available: Decimal | None = None
     margin: Decimal | None = None
+
+
+@dataclass(frozen=True)
+class KrakenFill:
+    order_id: str
+    symbol: str
+    side: str
+    price: Decimal
+    size: Decimal | None = None
+    fill_id: str | None = None
+    fill_time: str | None = None
 
 
 class LocalInstrumentMetadataProvider:
@@ -165,6 +180,7 @@ class KrakenClient:
     SEND_ORDER_PATH = "/api/v3/sendorder"
     CANCEL_ORDER_PATH = "/api/v3/cancelorder"
     ACCOUNTS_PATH = "/api/v3/accounts"
+    FILLS_PATH = "/api/v3/fills"
 
     def __init__(
         self,
@@ -368,10 +384,36 @@ class KrakenClient:
             )
         return parse_account_balances(payload)
 
+    def fetch_recent_fills(self) -> list[KrakenFill]:
+        request = self.build_fills_request()
+        try:
+            response = httpx.request(request.method, request.url, headers=request.headers, timeout=10)
+            response.raise_for_status()
+            payload = response.json()
+        except httpx.HTTPError as exc:
+            raise KrakenAccountEventError(f"Kraken fills request failed: {exc}") from exc
+        except ValueError as exc:
+            raise KrakenAccountEventError("Kraken fills response is not valid JSON.") from exc
+
+        if not isinstance(payload, Mapping):
+            raise KrakenAccountEventError("Kraken fills response has an unexpected shape.")
+        if str(payload.get("result", "success")).lower() != "success":
+            raise KrakenAccountEventError(f"Kraken fills request was not successful: {payload.get('error') or payload}")
+        return parse_kraken_fills(payload)
+
     def build_account_request(self, *, include_nonce: bool = True) -> KrakenAuthenticatedRequest:
         return self.build_private_request(
             "GET",
             self.ACCOUNTS_PATH,
+            {},
+            require_live_trading=False,
+            include_nonce=include_nonce,
+        )
+
+    def build_fills_request(self, *, include_nonce: bool = True) -> KrakenAuthenticatedRequest:
+        return self.build_private_request(
+            "GET",
+            self.FILLS_PATH,
             {},
             require_live_trading=False,
             include_nonce=include_nonce,
@@ -697,6 +739,42 @@ def parse_account_balances(payload: object) -> list[AccountBalance]:
     if not balances:
         raise KrakenAccountError("Kraken balance response did not include currency balances.")
     return balances
+
+
+def parse_kraken_fills(payload: object) -> list[KrakenFill]:
+    if not isinstance(payload, Mapping):
+        raise KrakenAccountEventError("Kraken fills response has an unexpected shape.")
+    if str(payload.get("result", "success")).lower() != "success":
+        raise KrakenAccountEventError(f"Kraken fills request was not successful: {payload.get('error') or payload}")
+
+    raw_fills = payload.get("fills")
+    if not isinstance(raw_fills, list):
+        raise KrakenAccountEventError("Kraken fills response does not contain fills.")
+
+    fills: list[KrakenFill] = []
+    for raw_fill in raw_fills:
+        if not isinstance(raw_fill, Mapping):
+            continue
+        order_id = raw_fill.get("order_id") or raw_fill.get("orderId") or raw_fill.get("cliOrdId")
+        price = raw_fill.get("price")
+        if order_id is None or price is None:
+            continue
+        size = raw_fill.get("size") or raw_fill.get("filledSize")
+        try:
+            fills.append(
+                KrakenFill(
+                    order_id=str(order_id),
+                    symbol=str(raw_fill.get("symbol") or "").upper(),
+                    side=str(raw_fill.get("side") or "").lower(),
+                    price=Decimal(str(price)),
+                    size=Decimal(str(size)) if size is not None else None,
+                    fill_id=str(raw_fill["fill_id"]) if raw_fill.get("fill_id") is not None else None,
+                    fill_time=str(raw_fill["fillTime"]) if raw_fill.get("fillTime") is not None else None,
+                )
+            )
+        except Exception as exc:
+            raise KrakenAccountEventError("Kraken fills response contains invalid decimal values.") from exc
+    return fills
 
 
 def _parse_balance_row(account: str, currency: str, raw: Mapping[str, object]) -> AccountBalance:

@@ -1,8 +1,10 @@
+from decimal import Decimal
+
 import pytest
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from kraken_telegram_gateway.gateway.config import Settings
-from kraken_telegram_gateway.gateway.kraken import AccountBalance, KrakenAccountError
+from kraken_telegram_gateway.gateway.kraken import AccountBalance, KrakenAccountError, KrakenFill
 from kraken_telegram_gateway.gateway.models import (
     AuditEvent,
     OrderRole,
@@ -209,6 +211,61 @@ def test_scalp_status_stop_and_report_use_paper_metrics():
     assert scalp_session is not None
     assert scalp_session.status == ScalpSessionStatus.STOPPED
     assert scalp_session.stop_reason == "manual_stop"
+
+
+def test_scalp_sync_fills_command_marks_live_entry_filled(monkeypatch):
+    def fake_fetch_recent_fills(self):
+        return [
+            KrakenFill(
+                order_id="OID-SCALP-1",
+                symbol="PF_LINKUSD",
+                side="buy",
+                price=Decimal("10.02"),
+            )
+        ]
+
+    monkeypatch.setattr(
+        "kraken_telegram_gateway.gateway.kraken.KrakenClient.fetch_recent_fills",
+        fake_fetch_recent_fills,
+    )
+    settings = Settings(kraken_api_key="public-key", kraken_api_secret="dGVzdC1zZWNyZXQ=")
+    with make_session() as session:
+        scalp_session = ScalpSession(
+            id="scalp-live-1",
+            pair="PF_LINKUSD",
+            side_mode="buy",
+            amount_usdc=10,
+            leverage=1,
+            duration_seconds=3600,
+            max_hold_seconds=300,
+            max_losses=1,
+            min_net_pnl=1,
+            mode="live",
+            status=ScalpSessionStatus.LIVE_ACTIVE,
+        )
+        trade = ScalpTrade(
+            id="scalp-trade-1",
+            session_id=scalp_session.id,
+            pair="PF_LINKUSD",
+            side="buy",
+            amount_usdc=10,
+            leverage=1,
+            entry_price=10.01,
+            status=ScalpTradeStatus.LIVE_SUBMITTED,
+            external_order_id="OID-SCALP-1",
+        )
+        session.add(scalp_session)
+        session.add(trade)
+        session.commit()
+
+        reply = dispatch_telegram_text("/scalp_sync_fills scalp-live-1", session, settings)
+        refreshed_trade = session.get(ScalpTrade, trade.id)
+
+    assert "Sync fills: 1 entree(s) scalp live marquee(s) filled, 0 ignoree(s)." in reply
+    assert "Statut: live_active" in reply
+    assert "Scannes: 1 | Filled: 1 | Ignores: 0" in reply
+    assert refreshed_trade is not None
+    assert refreshed_trade.status == ScalpTradeStatus.LIVE_ENTRY_FILLED
 
 
 def test_scalp_tick_kraken_runs_scheduler_from_telegram(monkeypatch):

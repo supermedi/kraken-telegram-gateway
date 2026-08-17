@@ -6,7 +6,7 @@ from sqlalchemy import func
 from sqlmodel import Session, select
 
 from kraken_telegram_gateway.gateway.config import Settings
-from kraken_telegram_gateway.gateway.kraken import AccountBalance, KrakenClient
+from kraken_telegram_gateway.gateway.kraken import AccountBalance, KrakenClient, KrakenFill
 from kraken_telegram_gateway.gateway.market_data import collect_kraken_futures_snapshots
 from kraken_telegram_gateway.gateway.models import (
     AuditEvent,
@@ -32,6 +32,7 @@ from kraken_telegram_gateway.gateway.schemas import (
     AuditEventTypeSummary,
     ConfirmResult,
     ScalpIntent,
+    ScalpFillSyncResult,
     ScalpSchedulerResult,
     ScalpSessionDetail,
     ScalpSessionReport,
@@ -419,6 +420,89 @@ def run_active_scalp_paper_sessions_from_kraken(
         )
 
     return run_active_scalp_paper_sessions(session, snapshot_provider, settings=settings)
+
+
+def sync_scalp_entry_fills(session_id: str, session: Session, settings: Settings) -> ScalpFillSyncResult:
+    scalp_session = session.get(ScalpSession, session_id)
+    if scalp_session is None:
+        return ScalpFillSyncResult(
+            session_id=session_id,
+            status="not_found",
+            scanned=0,
+            filled=0,
+            skipped=0,
+            message="Session scalp introuvable.",
+        )
+    if scalp_session.mode != "live":
+        return ScalpFillSyncResult(
+            session_id=scalp_session.id,
+            status=scalp_session.status,
+            scanned=0,
+            filled=0,
+            skipped=0,
+            message="Sync fills ignoree: session scalp non-live.",
+        )
+
+    live_trades = session.exec(
+        select(ScalpTrade).where(
+            ScalpTrade.session_id == scalp_session.id,
+            ScalpTrade.status == ScalpTradeStatus.LIVE_SUBMITTED,
+            ScalpTrade.external_order_id.is_not(None),
+        )
+    ).all()
+    if not live_trades:
+        return ScalpFillSyncResult(
+            session_id=scalp_session.id,
+            status=scalp_session.status,
+            scanned=0,
+            filled=0,
+            skipped=0,
+            message="Aucun trade scalp live soumis a synchroniser.",
+        )
+
+    fills_by_order_id = {
+        fill.order_id: fill
+        for fill in KrakenClient(settings).fetch_recent_fills()
+        if fill.order_id
+    }
+    filled = 0
+    skipped = 0
+    for trade in live_trades:
+        if trade.external_order_id is None:
+            skipped += 1
+            continue
+        fill = fills_by_order_id.get(trade.external_order_id)
+        if fill is None or not _kraken_fill_matches_scalp_trade(fill, trade):
+            skipped += 1
+            continue
+
+        trade.status = ScalpTradeStatus.LIVE_ENTRY_FILLED
+        trade.entry_price = float(fill.price)
+        trade.opened_at = _parse_kraken_event_time(fill.fill_time) or trade.opened_at
+        trade.updated_at = utc_now()
+        session.add(trade)
+        session.add(
+            AuditEvent(
+                event_type="scalp_live_entry_filled",
+                message=(
+                    f"Scalp live trade {trade.id} entry fill detected for order "
+                    f"{trade.external_order_id} at {fill.price:g}."
+                ),
+            )
+        )
+        filled += 1
+
+    scalp_session.updated_at = utc_now()
+    session.add(scalp_session)
+    session.commit()
+    return ScalpFillSyncResult(
+        session_id=scalp_session.id,
+        status=scalp_session.status,
+        scanned=len(live_trades),
+        filled=filled,
+        skipped=skipped,
+        message=f"Sync fills: {filled} entree(s) scalp live marquee(s) filled, {skipped} ignoree(s).",
+    )
 
 
 def asyncio_run_collect_snapshots(product_id: str, *, limit: int, timeout_seconds: float) -> list[MarketSnapshot]:
@@ -939,7 +1023,15 @@ def build_scalp_session_report(detail: ScalpSessionDetail) -> ScalpSessionReport
 
 def compute_scalp_metrics(trades: list[ScalpTrade]) -> dict[str, float | int]:
     closed = [trade for trade in trades if trade.status == ScalpTradeStatus.PAPER_CLOSED]
-    open_trades = [trade for trade in trades if trade.status in {ScalpTradeStatus.PAPER_OPEN, ScalpTradeStatus.LIVE_SUBMITTED}]
+    open_trades = [
+        trade
+        for trade in trades
+        if trade.status in {
+            ScalpTradeStatus.PAPER_OPEN,
+            ScalpTradeStatus.LIVE_SUBMITTED,
+            ScalpTradeStatus.LIVE_ENTRY_FILLED,
+        }
+    ]
     pnl_values = [trade.net_pnl or 0 for trade in closed]
     wins = [value for value in pnl_values if value > 0]
     losses = [value for value in pnl_values if value < 0]
@@ -993,7 +1085,13 @@ def _get_open_scalp_trade(session_id: str, session: Session) -> ScalpTrade | Non
     return session.exec(
         select(ScalpTrade).where(
             ScalpTrade.session_id == session_id,
-            ScalpTrade.status.in_([ScalpTradeStatus.PAPER_OPEN, ScalpTradeStatus.LIVE_SUBMITTED]),
+            ScalpTrade.status.in_(
+                [
+                    ScalpTradeStatus.PAPER_OPEN,
+                    ScalpTradeStatus.LIVE_SUBMITTED,
+                    ScalpTradeStatus.LIVE_ENTRY_FILLED,
+                ]
+            ),
         )
     ).first()
 
@@ -1127,6 +1225,23 @@ def _complete_scalp_session(scalp_session: ScalpSession, reason: str, session: S
         )
     )
     session.flush()
+
+
+def _kraken_fill_matches_scalp_trade(fill: KrakenFill, trade: ScalpTrade) -> bool:
+    if fill.symbol and fill.symbol != trade.pair.upper():
+        return False
+    if fill.side and fill.side != trade.side.lower():
+        return False
+    return True
+
+
+def _parse_kraken_event_time(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc)
+    except ValueError:
+        return None
 
 
 def format_optional_decimal(value) -> str:

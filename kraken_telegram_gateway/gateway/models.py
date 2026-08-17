@@ -25,6 +25,7 @@ class ScalpTradeStatus(StrEnum):
     PAPER_OPEN = "paper_open"
     PAPER_CLOSED = "paper_closed"
     LIVE_SUBMITTED = "live_submitted"
+    LIVE_ENTRY_FILLED = "live_entry_filled"
     LIVE_BLOCKED = "live_blocked"
 
 

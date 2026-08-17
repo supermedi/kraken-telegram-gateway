@@ -8,7 +8,7 @@ import httpx
 from sqlmodel import Session
 
 from kraken_telegram_gateway.gateway.config import Settings
-from kraken_telegram_gateway.gateway.kraken import KrakenAccountError, KrakenLiveTradingDisabledError
+from kraken_telegram_gateway.gateway.kraken import KrakenAccountError, KrakenAccountEventError, KrakenLiveTradingDisabledError
 from kraken_telegram_gateway.gateway.models import OrderRole, OrderStatus, ProcessedTelegramUpdate, TradeOrder, TradeStatus
 from kraken_telegram_gateway.gateway.parser import CommandParseError
 from kraken_telegram_gateway.gateway.risk import RiskValidationError
@@ -37,6 +37,7 @@ from kraken_telegram_gateway.gateway.service import (
     run_active_scalp_paper_sessions_from_kraken,
     start_scalp_session,
     stop_scalp_session,
+    sync_scalp_entry_fills,
     submit_ready_targets,
 )
 
@@ -197,6 +198,10 @@ def dispatch_telegram_text(text: str, session: Session, settings: Settings) -> s
                 return "Session scalp introuvable."
             return format_scalp_report(detail)
 
+        if command in {"/scalp_sync_fills", "/scalp-sync-fills"}:
+            session_id = _require_scalp_session_id(argument, "/scalp_sync_fills")
+            return format_scalp_fill_sync_result(sync_scalp_entry_fills(session_id, session, settings))
+
         if command in {"/scalp_tick_kraken", "/scalp-tick-kraken"}:
             options = _parse_scalp_tick_kraken_options(argument)
             result = run_active_scalp_paper_sessions_from_kraken(session, **options, settings=settings)
@@ -219,13 +224,21 @@ def dispatch_telegram_text(text: str, session: Session, settings: Settings) -> s
                 "/balance [account=... currency=...|asset=...], "
                 "/scalp_start pair=PF_LINKUSD amount_usdc=100 duration=60m max_hold=5m max_losses=3, "
                 "/scalp_status <session_id>, /scalp_stop <session_id>, /scalp_report <session_id>, "
+                "/scalp_sync_fills <session_id>, "
                 "/scalp_tick_kraken [snapshots=1 timeout=10], "
                 "/pause, /resume.\n"
                 "Exemple: /trade pair=PF_XBTUSD side=buy amount_usdc=100 entry=limit:65000 "
                 "t1=67000:40% t2=69000:40% t3=72000:20%\n"
                 "Exemple court: LINK LONG 25USDC 2x Entry 9.356 Sl 9.298"
             )
-    except (CommandParseError, RiskValidationError, KrakenAccountError, KrakenLiveTradingDisabledError, ValueError) as exc:
+    except (
+        CommandParseError,
+        RiskValidationError,
+        KrakenAccountError,
+        KrakenAccountEventError,
+        KrakenLiveTradingDisabledError,
+        ValueError,
+    ) as exc:
         if (
             isinstance(exc, KrakenAccountError)
             and settings.kraken_balance_debug_errors
@@ -252,6 +265,17 @@ def format_scalp_scheduler_result(result) -> str:
         lines.append("Messages:")
         lines.extend(f"- {message}" for message in result.messages)
     return "\n".join(lines)
+
+
+def format_scalp_fill_sync_result(result) -> str:
+    return "\n".join(
+        [
+            result.message,
+            f"Session ID: {result.session_id}",
+            f"Statut: {result.status}",
+            f"Scannes: {result.scanned} | Filled: {result.filled} | Ignores: {result.skipped}",
+        ]
+    )
 
 
 def extract_trade_id_from_reply(reply: str) -> str | None:

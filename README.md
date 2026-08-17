@@ -105,6 +105,7 @@ Commandes Telegram supportees :
 /scalp_status <session_id>
 /scalp_stop <session_id>
 /scalp_report <session_id>
+/scalp_sync_fills <session_id>
 /scalp_tick_kraken [snapshots=2 timeout=10]
 /pause
 /resume
@@ -128,7 +129,7 @@ Les filtres Telegram `status`, `role`, `event_type`, `type` et `event` acceptent
 
 Un mode scalping experimental est initialise dans [SCALPING_MODE.md](SCALPING_MODE.md). Par defaut, `/scalp_start` cree une session paper durable sans envoyer d'ordre Kraken, accepte des trades qui pourront durer de quelques secondes a quelques minutes via `max_hold`, applique les parametres `duration`, `max_losses` et `min_pnl`, puis `/scalp_status`, `/scalp_stop` et `/scalp_report` permettent de piloter la session. Le rapport affiche winrate, PnL brut/net, frais estimes, drawdown max, signaux rejetes et raisons de cloture. `/scalp_tick_kraken` collecte des snapshots publics Kraken Futures WebSocket et fait avancer les sessions actives depuis Telegram; les options `snapshots=1..10` et `timeout=1..60` sont disponibles. Le meme scheduler est expose par `POST /scalp/scheduler/tick-kraken`. Une boucle background opt-in peut lancer ce tick automatiquement avec `SCALP_KRAKEN_SCHEDULER_ENABLED=true`; elle reste desactivee par defaut.
 
-Scalping live experimental: `mode=live` est accepte uniquement si `SCALP_LIVE_ENABLED=true`, `LIVE_TRADING_ENABLED=true`, `DRY_RUN=false`, les cles Kraken Futures sont presentes, la paire est autorisee, et le montant respecte `SCALP_LIVE_MAX_AMOUNT_USDC`. La V1 live soumet seulement un ordre limit d'entree quand un signal passe. Elle ne place pas encore d'ordre de sortie automatique et ne suit pas encore les fills Kraken; surveiller la position directement sur Kraken pendant les tests petit montant.
+Scalping live experimental: `mode=live` est accepte uniquement si `SCALP_LIVE_ENABLED=true`, `LIVE_TRADING_ENABLED=true`, `DRY_RUN=false`, les cles Kraken Futures sont presentes, la paire est autorisee, et le montant respecte `SCALP_LIVE_MAX_AMOUNT_USDC`. La V1 live soumet seulement un ordre limit d'entree quand un signal passe. `/scalp_sync_fills <session_id>` et `POST /scalp/{session_id}/sync-fills` interrogent le endpoint Kraken Futures read-only `/derivatives/api/v3/fills` pour marquer localement les entrees live remplies quand l'order id Kraken correspond. Elle ne place pas encore d'ordre de sortie automatique; surveiller la position directement sur Kraken pendant les tests petit montant.
 
 Variables utiles pour la boucle scalp paper Kraken:
 
@@ -188,6 +189,7 @@ curl -X POST http://localhost:8000/commands/scalp-start \
   -d '{"text":"/scalp_start pair=PF_LINKUSD amount_usdc=10 mode=live side=buy duration=15m max_hold=2m max_losses=1 min_pnl=1"}'
 curl http://localhost:8000/scalp/<session_id>
 curl http://localhost:8000/scalp/<session_id>/report
+curl -X POST http://localhost:8000/scalp/<session_id>/sync-fills
 curl -X POST http://localhost:8000/scalp/scheduler/tick
 curl -X POST "http://localhost:8000/scalp/scheduler/tick-kraken?snapshots_per_session=2&timeout_seconds=10"
 curl -X POST http://localhost:8000/commands/scalp-stop/<session_id>
@@ -197,4 +199,4 @@ curl -X POST http://localhost:8000/commands/scalp-stop/<session_id>
 `GET /audit` retourne les evenements d'audit les plus recents sous forme `{items,total,limit,offset}` avec filtres optionnels `trade_id` et `event_type`.
 `GET /audit/event-types` retourne les compteurs par type d'evenement d'audit sous forme `{items,total}` pour aider les vues operateur.
 `GET /balance` retourne les soldes Kraken Futures lus via `/derivatives/api/v3/accounts`, avec filtres optionnels `account` et `currency`; il exige les cles Kraken mais reste strictement read-only et disponible en dry-run.
-`POST /commands/scalp-start`, `GET /scalp/{session_id}`, `GET /scalp/{session_id}/report`, `POST /scalp/scheduler/tick`, `POST /scalp/scheduler/tick-kraken` et `POST /commands/scalp-stop/{session_id}` exposent le socle scalping paper/live cote API. Le live reste bloque par defaut.
+`POST /commands/scalp-start`, `GET /scalp/{session_id}`, `GET /scalp/{session_id}/report`, `POST /scalp/{session_id}/sync-fills`, `POST /scalp/scheduler/tick`, `POST /scalp/scheduler/tick-kraken` et `POST /commands/scalp-stop/{session_id}` exposent le socle scalping paper/live cote API. Le live reste bloque par defaut.

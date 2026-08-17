@@ -21,6 +21,7 @@ Companion commands:
 /scalp_status [session_id]
 /scalp_stop <session_id>
 /scalp_report <session_id>
+/scalp_sync_fills <session_id>
 /scalp_tick_kraken snapshots=2 timeout=10
 ```
 
@@ -77,7 +78,7 @@ The signal should produce a score and a reason string. Paper reports must show b
 7. Increment loss counter only after net PnL is negative.
 8. Stop the session if `max_losses`, `duration`, or manual stop is reached.
 
-Live V1 uses the same signal, but submits only the entry limit order. It stores the returned Kraken order id on the scalp trade. Automatic live exits, fill tracking, and reduce-only close orders are intentionally left for a later account-event/fill-tracking phase.
+Live V1 uses the same signal, but submits only the entry limit order. It stores the returned Kraken order id on the scalp trade. A read-only fill sync can poll Kraken Futures `/derivatives/api/v3/fills` and mark matching local scalp entries as `live_entry_filled`. Automatic live exits and reduce-only close orders are intentionally left for a later phase.
 
 ## Data Model Proposal
 
@@ -124,6 +125,7 @@ Implemented:
 - Telegram commands `/scalp_start`, `/scalp_status`, `/scalp_stop`, and `/scalp_report`.
 - Telegram command `/scalp_tick_kraken` to run a manual Kraken public WebSocket tick.
 - API endpoints `POST /commands/scalp-start`, `GET /scalp/{session_id}`, `GET /scalp/{session_id}/report`, and `POST /commands/scalp-stop/{session_id}`.
+- API endpoint `POST /scalp/{session_id}/sync-fills` and Telegram command `/scalp_sync_fills <session_id>` for read-only fill reconciliation of submitted live scalp entries.
 - Live enforcement: `mode=live` is rejected unless `SCALP_LIVE_ENABLED=true`, the existing Kraken live gates are open, the pair is allowed, and the amount is within `SCALP_LIVE_MAX_AMOUNT_USDC`.
 - Compact status/report formatting with winrate, gross/net PnL, estimated fees, max drawdown, rejected signals, close reasons, and stop reason from persisted paper data.
 - Synthetic market-data adapter and paper runner for deterministic tests.
@@ -134,12 +136,13 @@ Implemented:
 - Opt-in FastAPI background loop for active paper sessions via `SCALP_KRAKEN_SCHEDULER_ENABLED=true`.
 - Offline deterministic replay CLI `kraken-scalp-replay` for one or more JSON, JSONL, or CSV snapshot files, including common historical-book field aliases such as `best_bid`, `best_ask`, `bid_qty`, `ask_qty`, and `volumeRatio`, nested order-book exports such as `bids`/`asks` or Binance `b`/`a` levels, OHLCV/kline arrays or mappings converted into synthetic paper-only top-of-book snapshots, plus raw public Kraken Futures WebSocket `book_snapshot`, `book`, and `ticker_lite` JSON/JSONL messages. It runs paper sessions in an in-memory SQLite database and emits either a single-session JSON report or a multi-replay summary without contacting Kraken.
 - Experimental live entry submission for `mode=live` sessions: a passing signal submits one Kraken Futures limit entry order and records the external order id.
+- Read-only live fill reconciliation from Kraken Futures recent fills, marking matched submitted entries as `live_entry_filled` without placing exit orders.
 
 Not implemented yet:
 
 - Richer exchange/download-specific historical-data adapters.
 - Automatic live exit orders.
-- Real fill/account-event tracking.
+- Continuous real fill/account-event tracking.
 
 ## Implementation Phases
 
@@ -156,7 +159,8 @@ Not implemented yet:
 11. Done: accept nested order-book export levels such as CCXT-style `bids`/`asks` and Binance `b`/`a` rows.
 12. Done: accept OHLCV/kline exports as synthetic paper-only snapshots for coarse replay validation.
 13. Done: add a separate `SCALP_LIVE_ENABLED=true` gate for live entry orders.
-14. Add Kraken account-event polling/webhook tracking before any automatic live exits.
+14. Done: add a first Kraken read-only fills polling abstraction for submitted live scalp entries.
+15. Add continuous Kraken account-event polling/webhook tracking before any automatic live exits.
 
 ## Safety Notes
 
