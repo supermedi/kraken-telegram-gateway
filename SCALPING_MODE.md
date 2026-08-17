@@ -128,10 +128,10 @@ Implemented:
 - Runner rules for one open trade at a time, net-PnL close, max-hold close, duration stop, and max-losses stop.
 - Injectable active-session scheduler plus manual API ticks.
 - Kraken Futures public WebSocket adapter for book/ticker_lite snapshots feeding paper sessions.
+- Opt-in FastAPI background loop for active paper sessions via `SCALP_KRAKEN_SCHEDULER_ENABLED=true`.
 
 Not implemented yet:
 
-- Background loop scheduling for active paper sessions.
 - Longer paper validation runs and replay support.
 - Live order submission.
 
@@ -142,7 +142,7 @@ Not implemented yet:
 3. Done: add paper runner with one open trade at a time and core stop rules.
 4. Done: add background scheduling for active paper sessions through an injectable snapshot provider and manual API tick.
 5. Done: add Kraken WebSocket market-data integration for manual paper scheduler ticks through API and Telegram.
-6. Add a periodic background loop for active paper sessions.
+6. Done: add a periodic opt-in background loop for active paper sessions.
 7. Only after repeated paper validation, add a separate `SCALPING_LIVE_ENABLED=true` gate for live orders.
 
 ## Safety Notes

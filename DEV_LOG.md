@@ -22,8 +22,8 @@ The hourly isolated cron must use this file as the handoff point between runs:
 - Kraken Futures: authenticated REST signing, private request preparation, read-only `/derivatives/api/v3/accounts` balance lookup exposed through Telegram `/balance`/`/solde` and API `GET /balance` with optional filters, a local-first/public-fallback instrument metadata provider, a metadata cache validator CLI, safe entry/target limit-order payload boundaries, live order POST submission to `/derivatives/api/v3/sendorder`, and live order cancellation via `/derivatives/api/v3/cancelorder` are implemented behind the existing live gates.
 - Deployment: Dockerfile, Docker Compose, GHCR publish workflow, final public image name `ghcr.io/supermedi/kraken-telegram-gateway:latest`, and deployment documentation are in place; runtime secrets stay in local `.env`.
 - GitHub: dedicated public repository created and initial code pushed to `https://github.com/supermedi/kraken-telegram-gateway`.
-- Verification baseline: `python3 -m pytest -q` was last reported passing with 107 tests on 2026-08-17.
-- Scalping mode: V1 foundation implemented as a separate paper-only session mode with persistent `ScalpSession`/`ScalpTrade`/`ScalpSignal` tables, `/scalp_start`, `/scalp_status`, `/scalp_stop`, `/scalp_report`, `/scalp_tick_kraken`, API endpoints, multi-minute `max_hold`, synthetic market-data runner, injectable active-session scheduler, Kraken Futures public WebSocket snapshot collection, and net-PnL reporting. Automatic background looping and live execution remain queued behind paper validation and future explicit gates.
+- Verification baseline: `python3 -m pytest -q` was last reported passing with 126 tests on 2026-08-17.
+- Scalping mode: V1 foundation implemented as a separate paper-only session mode with persistent `ScalpSession`/`ScalpTrade`/`ScalpSignal` tables, `/scalp_start`, `/scalp_status`, `/scalp_stop`, `/scalp_report`, `/scalp_tick_kraken`, API endpoints, multi-minute `max_hold`, synthetic market-data runner, injectable active-session scheduler, Kraken Futures public WebSocket snapshot collection, opt-in FastAPI background loop, and net-PnL reporting. Live execution remains queued behind paper validation and future explicit gates.
 
 ## Guardrails
 
@@ -41,13 +41,25 @@ The hourly isolated cron must use this file as the handoff point between runs:
 
 1. Validate Docker build in the target VPS environment, then confirm GHCR pull/run health against `ghcr.io/supermedi/kraken-telegram-gateway:latest`.
 2. Validate Docker/GHCR deployment on the VPS with the public Kraken instrument metadata fallback enabled.
-3. Wire the Kraken WebSocket snapshot provider into an actual periodic background loop for active paper sessions.
-4. Add longer paper validation/replay workflows and reporting for winrate, PnL net, drawdown, fees, and stop reasons.
-5. Add Kraken account-event polling/webhook abstraction for real entry fill detection only after live integration is explicitly approved.
-6. Monitor target-submission partial-block diagnostics in live-gated testing and refine only if operator feedback remains unclear.
-7. Extend audit/balance/Telegram diagnostics only if operators need retention/export, balance freshness, richer webhook failure visibility, or additional mobile command ergonomics.
+3. Add longer paper validation/replay workflows and reporting for winrate, PnL net, drawdown, fees, and stop reasons.
+4. Add Kraken account-event polling/webhook abstraction for real entry fill detection only after live integration is explicitly approved.
+5. Monitor target-submission partial-block diagnostics in live-gated testing and refine only if operator feedback remains unclear.
+6. Extend audit/balance/Telegram diagnostics only if operators need retention/export, balance freshness, richer webhook failure visibility, or additional mobile command ergonomics.
 
 ## Cycle Log
+
+### 2026-08-17 11:44 UTC - Opt-in Scalp Kraken Background Scheduler
+
+- Chose Next Queue item 3 and wired the Kraken public WebSocket snapshot provider into a periodic FastAPI background loop for active scalp paper sessions.
+- Added opt-in settings `SCALP_KRAKEN_SCHEDULER_ENABLED`, `SCALP_KRAKEN_SCHEDULER_INTERVAL_SECONDS`, `SCALP_KRAKEN_SCHEDULER_SNAPSHOTS_PER_SESSION`, and `SCALP_KRAKEN_SCHEDULER_TIMEOUT_SECONDS`.
+- Kept the loop disabled by default and paper-only; no Kraken live order gate, dry-run default, credentials, or live trading path was changed.
+- Documented the scheduler settings for local/VPS operation and marked the background-loop phase done in the scalping design doc.
+
+Files changed: `kraken_telegram_gateway/gateway/app.py`, `kraken_telegram_gateway/gateway/config.py`, `tests/test_api.py`, `README.md`, `SCALPING_MODE.md`, `DEPLOYMENT.md`, `DEV_LOG.md`.
+
+Tests: `python3 -m pytest tests/test_api.py::test_scalp_scheduler_kraken_tick_uses_market_data_provider tests/test_api.py::test_scalp_kraken_background_scheduler_is_disabled_by_default tests/test_api.py::test_lifespan_starts_scalp_kraken_scheduler_only_when_enabled tests/test_api.py::test_scalp_kraken_scheduler_loop_runs_configured_tick_once -q` -> 4 passed. `python3 -m compileall -q kraken_telegram_gateway` -> OK. `python3 -m pytest -q` -> 126 passed, 1 Starlette/TestClient deprecation warning.
+
+Commit local: `Add opt-in scalp Kraken scheduler loop`.
 
 ### 2026-08-17 11:22 UTC - Telegram Kraken Scalp Tick
 

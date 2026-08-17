@@ -23,6 +23,10 @@ class Settings(BaseSettings):
     kraken_futures_base_url: str = "https://futures.kraken.com"
     kraken_instrument_metadata_path: str | None = None
     kraken_balance_debug_errors: bool = False
+    scalp_kraken_scheduler_enabled: bool = False
+    scalp_kraken_scheduler_interval_seconds: float = Field(default=60, ge=1)
+    scalp_kraken_scheduler_snapshots_per_session: int = Field(default=1, ge=1, le=10)
+    scalp_kraken_scheduler_timeout_seconds: float = Field(default=10, ge=1, le=60)
 
     @property
     def allowed_pair_set(self) -> set[str]:

@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import contextmanager
 from datetime import datetime
 from decimal import Decimal
@@ -6,6 +7,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
+from kraken_telegram_gateway.gateway import app as app_module
 from kraken_telegram_gateway.gateway.app import app
 from kraken_telegram_gateway.gateway.config import Settings, get_settings
 from kraken_telegram_gateway.gateway.db import get_session
@@ -289,6 +291,78 @@ def test_scalp_scheduler_kraken_tick_uses_market_data_provider(monkeypatch):
     assert scheduler_response.json()["scanned"] == 1
     assert scheduler_response.json()["processed"] == 1
     assert scheduler_response.json()["skipped"] == 0
+
+
+def test_scalp_kraken_background_scheduler_is_disabled_by_default():
+    settings = Settings(max_amount_usdc=100)
+
+    assert settings.scalp_kraken_scheduler_enabled is False
+    assert settings.scalp_kraken_scheduler_interval_seconds == 60
+    assert settings.scalp_kraken_scheduler_snapshots_per_session == 1
+    assert settings.scalp_kraken_scheduler_timeout_seconds == 10
+
+
+def test_lifespan_starts_scalp_kraken_scheduler_only_when_enabled(monkeypatch):
+    created_coroutines = []
+
+    class FakeTask:
+        def cancel(self):
+            pass
+
+        def __await__(self):
+            if False:
+                yield
+            return None
+
+    def fake_create_task(coroutine):
+        created_coroutines.append(coroutine)
+        coroutine.close()
+        return FakeTask()
+
+    monkeypatch.setattr(app_module, "init_db", lambda: None)
+    monkeypatch.setattr(
+        app_module,
+        "get_settings",
+        lambda: Settings(max_amount_usdc=100, scalp_kraken_scheduler_enabled=True),
+    )
+    monkeypatch.setattr(app_module.asyncio, "create_task", fake_create_task)
+
+    async def run_lifespan():
+        async with app_module.lifespan(app):
+            pass
+
+    asyncio.run(run_lifespan())
+
+    assert len(created_coroutines) == 1
+
+
+def test_scalp_kraken_scheduler_loop_runs_configured_tick_once(monkeypatch):
+    ticks = []
+
+    async def fake_sleep(_seconds):
+        return None
+
+    def fake_tick(settings):
+        ticks.append(
+            (
+                settings.scalp_kraken_scheduler_snapshots_per_session,
+                settings.scalp_kraken_scheduler_timeout_seconds,
+            )
+        )
+
+    monkeypatch.setattr(app_module.asyncio, "sleep", fake_sleep)
+    monkeypatch.setattr(app_module, "_run_scalp_kraken_scheduler_once", fake_tick)
+
+    settings = Settings(
+        max_amount_usdc=100,
+        scalp_kraken_scheduler_enabled=True,
+        scalp_kraken_scheduler_snapshots_per_session=3,
+        scalp_kraken_scheduler_timeout_seconds=4,
+    )
+
+    asyncio.run(app_module.run_scalp_kraken_scheduler_loop(settings, max_ticks=1))
+
+    assert ticks == [(3, 4)]
 
 
 def test_entry_filled_api_marks_entry_filled_and_targets_ready():

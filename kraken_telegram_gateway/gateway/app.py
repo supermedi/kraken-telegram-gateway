@@ -1,11 +1,14 @@
+import asyncio
+import logging
 from contextlib import asynccontextmanager
+from contextlib import suppress
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlmodel import Session
 
 from kraken_telegram_gateway.gateway.config import Settings, get_settings
-from kraken_telegram_gateway.gateway.db import get_session, init_db
+from kraken_telegram_gateway.gateway.db import engine, get_session, init_db
 from kraken_telegram_gateway.gateway.kraken import AccountBalance, KrakenAccountError, KrakenLiveTradingDisabledError
 from kraken_telegram_gateway.gateway.parser import CommandParseError
 from kraken_telegram_gateway.gateway.risk import RiskValidationError
@@ -49,10 +52,43 @@ from kraken_telegram_gateway.gateway.telegram import (
 )
 
 
+logger = logging.getLogger(__name__)
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     init_db()
-    yield
+    settings = get_settings()
+    scalp_scheduler_task = None
+    if settings.scalp_kraken_scheduler_enabled:
+        scalp_scheduler_task = asyncio.create_task(run_scalp_kraken_scheduler_loop(settings))
+    try:
+        yield
+    finally:
+        if scalp_scheduler_task is not None:
+            scalp_scheduler_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await scalp_scheduler_task
+
+
+async def run_scalp_kraken_scheduler_loop(settings: Settings, *, max_ticks: int | None = None) -> None:
+    ticks = 0
+    while max_ticks is None or ticks < max_ticks:
+        await asyncio.sleep(settings.scalp_kraken_scheduler_interval_seconds)
+        try:
+            await asyncio.to_thread(_run_scalp_kraken_scheduler_once, settings)
+        except Exception:
+            logger.exception("Scalp Kraken paper scheduler tick failed.")
+        ticks += 1
+
+
+def _run_scalp_kraken_scheduler_once(settings: Settings) -> ScalpSchedulerResult:
+    with Session(engine) as session:
+        return run_active_scalp_paper_sessions_from_kraken(
+            session,
+            snapshots_per_session=settings.scalp_kraken_scheduler_snapshots_per_session,
+            timeout_seconds=settings.scalp_kraken_scheduler_timeout_seconds,
+        )
 
 
 app = FastAPI(title="Kraken Telegram Gateway", version="0.1.0", lifespan=lifespan)
