@@ -33,6 +33,7 @@ from kraken_telegram_gateway.gateway.schemas import (
     ConfirmResult,
     ScalpSchedulerResult,
     ScalpSessionDetail,
+    ScalpSessionReport,
     ScalpSessionResult,
     TradeDetail,
     TradeList,
@@ -161,6 +162,13 @@ def get_scalp_session_detail(session_id: str, session: Session) -> ScalpSessionD
         .limit(20)
     ).all()
     return ScalpSessionDetail(session=scalp_session, trades=list(trades), signals=list(signals))
+
+
+def get_scalp_session_report(session_id: str, session: Session) -> ScalpSessionReport | None:
+    detail = get_scalp_session_detail(session_id, session)
+    if detail is None:
+        return None
+    return build_scalp_session_report(detail)
 
 
 def run_scalp_paper_snapshots(
@@ -763,21 +771,50 @@ def format_scalp_status(detail: ScalpSessionDetail) -> str:
 
 
 def format_scalp_report(detail: ScalpSessionDetail) -> str:
-    metrics = compute_scalp_metrics(detail.trades)
-    win_rate = (metrics["wins"] / metrics["closed"] * 100) if metrics["closed"] else 0
+    report = build_scalp_session_report(detail)
+    close_reasons = ", ".join(f"{reason}={count}" for reason, count in sorted(report.close_reasons.items()))
     lines = [
         f"Rapport scalp: {detail.session.id}",
         f"{detail.session.pair} | mode={detail.session.mode} | statut={detail.session.status}",
-        f"Trades fermes: {metrics['closed']} | ouverts: {metrics['open']} | winrate={win_rate:.1f}%",
-        f"Net PnL: {metrics['net_pnl']:+.2f} USD | avg win={metrics['avg_win']:+.2f} | avg loss={metrics['avg_loss']:+.2f}",
-        f"Max losses: {metrics['losses']} / {detail.session.max_losses}",
-        f"Signaux journalises: {len(detail.signals)} derniers visibles",
+        f"Trades fermes: {report.closed_trades} | ouverts: {report.open_trades} | winrate={report.win_rate:.1f}%",
+        f"Net PnL: {report.net_pnl:+.2f} USD | gross={report.gross_pnl:+.2f} | frais={report.estimated_fees:.2f}",
+        f"Avg win={report.avg_win:+.2f} | avg loss={report.avg_loss:+.2f} | max drawdown={report.max_drawdown:.2f}",
+        f"Max losses: {report.losses} / {detail.session.max_losses}",
+        f"Signaux rejetes: {report.rejected_signals} | signaux visibles: {len(detail.signals)}",
     ]
+    if close_reasons:
+        lines.append(f"Raisons de cloture: {close_reasons}")
     if detail.session.stop_reason:
         lines.append(f"Raison d'arret: {detail.session.stop_reason}")
-    if metrics["closed"] == 0:
+    if report.closed_trades == 0:
         lines.append("Aucun trade paper ferme pour l'instant; le runner market-data n'est pas encore branche.")
     return "\n".join(lines)
+
+
+def build_scalp_session_report(detail: ScalpSessionDetail) -> ScalpSessionReport:
+    metrics = compute_scalp_metrics(detail.trades)
+    close_reasons = compute_scalp_close_reasons(detail.trades)
+    rejected_signals = len([signal for signal in detail.signals if signal.scalp_trade_id is None])
+    win_rate = (metrics["wins"] / metrics["closed"] * 100) if metrics["closed"] else 0
+    return ScalpSessionReport(
+        session_id=detail.session.id,
+        pair=detail.session.pair,
+        status=detail.session.status,
+        closed_trades=metrics["closed"],
+        open_trades=metrics["open"],
+        wins=metrics["wins"],
+        losses=metrics["losses"],
+        win_rate=win_rate,
+        gross_pnl=metrics["gross_pnl"],
+        estimated_fees=metrics["estimated_fees"],
+        net_pnl=metrics["net_pnl"],
+        avg_win=metrics["avg_win"],
+        avg_loss=metrics["avg_loss"],
+        max_drawdown=metrics["max_drawdown"],
+        rejected_signals=rejected_signals,
+        close_reasons=close_reasons,
+        stop_reason=detail.session.stop_reason,
+    )
 
 
 def compute_scalp_metrics(trades: list[ScalpTrade]) -> dict[str, float | int]:
@@ -786,15 +823,42 @@ def compute_scalp_metrics(trades: list[ScalpTrade]) -> dict[str, float | int]:
     pnl_values = [trade.net_pnl or 0 for trade in closed]
     wins = [value for value in pnl_values if value > 0]
     losses = [value for value in pnl_values if value < 0]
+    gross_values = [trade.gross_pnl or 0 for trade in closed]
+    fee_values = [trade.estimated_fees or 0 for trade in closed]
     return {
         "closed": len(closed),
         "open": len(open_trades),
         "wins": len(wins),
         "losses": len(losses),
+        "gross_pnl": sum(gross_values),
+        "estimated_fees": sum(fee_values),
         "net_pnl": sum(pnl_values),
         "avg_win": sum(wins) / len(wins) if wins else 0,
         "avg_loss": sum(losses) / len(losses) if losses else 0,
+        "max_drawdown": compute_scalp_max_drawdown(closed),
     }
+
+
+def compute_scalp_close_reasons(trades: list[ScalpTrade]) -> dict[str, int]:
+    close_reasons: dict[str, int] = {}
+    for trade in trades:
+        if trade.status != ScalpTradeStatus.PAPER_CLOSED:
+            continue
+        reason = trade.close_reason or "unknown"
+        close_reasons[reason] = close_reasons.get(reason, 0) + 1
+    return close_reasons
+
+
+def compute_scalp_max_drawdown(closed_trades: list[ScalpTrade]) -> float:
+    running_pnl = 0.0
+    peak_pnl = 0.0
+    max_drawdown = 0.0
+    sorted_trades = sorted(closed_trades, key=lambda trade: (trade.closed_at or trade.updated_at, trade.id))
+    for trade in sorted_trades:
+        running_pnl += trade.net_pnl or 0
+        peak_pnl = max(peak_pnl, running_pnl)
+        max_drawdown = max(max_drawdown, peak_pnl - running_pnl)
+    return max_drawdown
 
 
 def format_seconds(seconds: int) -> str:

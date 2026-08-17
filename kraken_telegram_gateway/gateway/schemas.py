@@ -154,6 +154,26 @@ class ScalpSessionResult(BaseModel):
     message: str
 
 
+class ScalpSessionReport(BaseModel):
+    session_id: str
+    pair: str
+    status: str
+    closed_trades: int
+    open_trades: int
+    wins: int
+    losses: int
+    win_rate: float
+    gross_pnl: float
+    estimated_fees: float
+    net_pnl: float
+    avg_win: float
+    avg_loss: float
+    max_drawdown: float
+    rejected_signals: int
+    close_reasons: dict[str, int]
+    stop_reason: str | None = None
+
+
 class ScalpSchedulerResult(BaseModel):
     scanned: int
     processed: int

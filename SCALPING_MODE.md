@@ -120,9 +120,9 @@ Implemented:
 - `/scalp_start` parser with `duration=60m`, `max_hold=5m`, `max_losses=3`, `min_pnl=5`, `amount`/`amount_usdc`, and `mode=paper`.
 - Telegram commands `/scalp_start`, `/scalp_status`, `/scalp_stop`, and `/scalp_report`.
 - Telegram command `/scalp_tick_kraken` to run a manual Kraken public WebSocket paper tick.
-- API endpoints `POST /commands/scalp-start`, `GET /scalp/{session_id}`, and `POST /commands/scalp-stop/{session_id}`.
+- API endpoints `POST /commands/scalp-start`, `GET /scalp/{session_id}`, `GET /scalp/{session_id}/report`, and `POST /commands/scalp-stop/{session_id}`.
 - Paper-only enforcement: `mode=live` is rejected.
-- Compact status/report formatting and basic PnL metrics from persisted paper trades.
+- Compact status/report formatting with winrate, gross/net PnL, estimated fees, max drawdown, rejected signals, close reasons, and stop reason from persisted paper data.
 - Synthetic market-data adapter and paper runner for deterministic tests.
 - V1 signal evaluation from spread, top-of-book imbalance, and local volume ratio.
 - Runner rules for one open trade at a time, net-PnL close, max-hold close, duration stop, and max-losses stop.

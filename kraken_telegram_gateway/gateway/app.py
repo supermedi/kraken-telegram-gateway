@@ -20,6 +20,7 @@ from kraken_telegram_gateway.gateway.schemas import (
     ConfirmResult,
     ScalpSchedulerResult,
     ScalpSessionDetail,
+    ScalpSessionReport,
     ScalpSessionResult,
     ScalpStartRequest,
     TradeDetail,
@@ -32,6 +33,7 @@ from kraken_telegram_gateway.gateway.service import (
     create_trade_preview,
     get_account_balances,
     get_scalp_session_detail,
+    get_scalp_session_report,
     get_trade_detail,
     get_trade_orders,
     list_audit_event_types,
@@ -137,6 +139,14 @@ def get_scalp_session(session_id: str, session: Session = Depends(get_session)) 
     if detail is None:
         raise HTTPException(status_code=404, detail="Scalp session not found")
     return detail
+
+
+@app.get("/scalp/{session_id}/report", response_model=ScalpSessionReport)
+def get_scalp_report(session_id: str, session: Session = Depends(get_session)) -> ScalpSessionReport:
+    report = get_scalp_session_report(session_id, session)
+    if report is None:
+        raise HTTPException(status_code=404, detail="Scalp session not found")
+    return report
 
 
 @app.post("/scalp/scheduler/tick", response_model=ScalpSchedulerResult)

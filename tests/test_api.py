@@ -216,6 +216,7 @@ def test_scalp_session_api_creates_and_stops_paper_session():
         session_id = start_response.json()["session_id"]
 
         detail_response = client.get(f"/scalp/{session_id}")
+        report_response = client.get(f"/scalp/{session_id}/report")
         stop_response = client.post(f"/commands/scalp-stop/{session_id}")
 
     assert start_response.status_code == 200
@@ -226,6 +227,11 @@ def test_scalp_session_api_creates_and_stops_paper_session():
     assert detail_response.json()["session"]["duration_seconds"] == 3600
     assert detail_response.json()["session"]["max_hold_seconds"] == 300
     assert detail_response.json()["trades"] == []
+    assert report_response.status_code == 200
+    assert report_response.json()["session_id"] == session_id
+    assert report_response.json()["closed_trades"] == 0
+    assert report_response.json()["rejected_signals"] == 0
+    assert report_response.json()["max_drawdown"] == 0
     assert stop_response.status_code == 200
     assert stop_response.json()["status"] == "stopped"
 

@@ -16,14 +16,14 @@ The hourly isolated cron must use this file as the handoff point between runs:
 - Project: Kraken Futures <-> Telegram trading gateway.
 - Runtime: Python/FastAPI with SQLite persistence.
 - Safety mode: dry-run only by default; live Kraken execution is approved only when the existing runtime gates are deliberately opened with `LIVE_TRADING_ENABLED=true`, `DRY_RUN=false`, and valid Kraken Futures credentials.
-- Telegram: webhook endpoint, command dispatcher, user allowlist, webhook secret, pause/resume, retry idempotency, trade previews plus a separate trade-id-only copy message, `/balance`/`/solde` read-only Kraken Futures account balance lookup with `account`/`currency` plus `asset`/`devise` currency aliases, idempotent `/cancel <trade_id>` with live Kraken order cancellation when an attached live order exists, `/status <trade_id>` trade visibility, `/orders <trade_id>` compact order visibility with case-insensitive `status`/`role` filters, `/trades` recent-list visibility with `limit`/`offset`/case-insensitive `status`/`pair`/`side` filters, `/audit` safety-event diagnostics with case-insensitive `event_type`/`type`/`event` filters, `/audit_types` and `/audit-types` event-type counters, idempotent `/entry_filled <trade_id>`/`/entry-filled <trade_id>` local lifecycle tracking, idempotent `/submit_targets <trade_id>`/`/submit-targets <trade_id>` dry-run target submission with partial-block diagnostics, and `/scalp_tick_kraken` manual paper scheduler ticks are implemented.
+- Telegram: webhook endpoint, command dispatcher, user allowlist, webhook secret, pause/resume, retry idempotency, trade previews plus a separate trade-id-only copy message, `/balance`/`/solde` read-only Kraken Futures account balance lookup with `account`/`currency` plus `asset`/`devise` currency aliases, idempotent `/cancel <trade_id>` with live Kraken order cancellation when an attached live order exists, `/status <trade_id>` trade visibility, `/orders <trade_id>` compact order visibility with case-insensitive `status`/`role` filters, `/trades` recent-list visibility with `limit`/`offset`/case-insensitive `status`/`pair`/`side` filters, `/audit` safety-event diagnostics with case-insensitive `event_type`/`type`/`event` filters, `/audit_types` and `/audit-types` event-type counters, idempotent `/entry_filled <trade_id>`/`/entry-filled <trade_id>` local lifecycle tracking, idempotent `/submit_targets <trade_id>`/`/submit-targets <trade_id>` dry-run target submission with partial-block diagnostics, `/scalp_report` paper validation metrics, and `/scalp_tick_kraken` manual paper scheduler ticks are implemented.
 - Risk policy: stop loss is optional by default with a warning; `REQUIRE_STOP_LOSS_FOR_CONFIRMATION=true` rejects confirmation of no-stop trades without touching planned orders or Kraken.
 - Trading model: trade previews are persisted with planned entry orders and reduce-only target exit orders; repeated cancellation retries are no-ops that avoid duplicate audit events; confirmed entries can be marked `filled`, which moves target exits to `ready_to_submit`; ready targets can then be marked `dry_run_submitted` with local external ids and no Kraken network submission; mixed target submission results report submitted and blocked counts, plus a `targets_blocked` audit event; repeated target submission retries are no-ops that preserve existing ids and avoid duplicate audit events; `/trades` lists recent trades with `limit`, `offset`, `status`, `pair`, and `side` filters; `/trades/{trade_id}` returns the trade plus attached orders; `/trades/{trade_id}/orders` returns attached orders with optional `status` and `role` filters; `/audit` lists recent audit events with `trade_id` and `event_type` filters; `/audit/event-types` returns local audit event-type counters.
 - Kraken Futures: authenticated REST signing, private request preparation, read-only `/derivatives/api/v3/accounts` balance lookup exposed through Telegram `/balance`/`/solde` and API `GET /balance` with optional filters, a local-first/public-fallback instrument metadata provider, a metadata cache validator CLI, safe entry/target limit-order payload boundaries, live order POST submission to `/derivatives/api/v3/sendorder`, and live order cancellation via `/derivatives/api/v3/cancelorder` are implemented behind the existing live gates.
 - Deployment: Dockerfile, Docker Compose, GHCR publish workflow, final public image name `ghcr.io/supermedi/kraken-telegram-gateway:latest`, and deployment documentation are in place; runtime secrets stay in local `.env`.
 - GitHub: dedicated public repository created and initial code pushed to `https://github.com/supermedi/kraken-telegram-gateway`.
 - Verification baseline: `python3 -m pytest -q` was last reported passing with 126 tests on 2026-08-17.
-- Scalping mode: V1 foundation implemented as a separate paper-only session mode with persistent `ScalpSession`/`ScalpTrade`/`ScalpSignal` tables, `/scalp_start`, `/scalp_status`, `/scalp_stop`, `/scalp_report`, `/scalp_tick_kraken`, API endpoints, multi-minute `max_hold`, synthetic market-data runner, injectable active-session scheduler, Kraken Futures public WebSocket snapshot collection, opt-in FastAPI background loop, and net-PnL reporting. Live execution remains queued behind paper validation and future explicit gates.
+- Scalping mode: V1 foundation implemented as a separate paper-only session mode with persistent `ScalpSession`/`ScalpTrade`/`ScalpSignal` tables, `/scalp_start`, `/scalp_status`, `/scalp_stop`, `/scalp_report`, `/scalp_tick_kraken`, API endpoints including `GET /scalp/{session_id}/report`, multi-minute `max_hold`, synthetic market-data runner, injectable active-session scheduler, Kraken Futures public WebSocket snapshot collection, opt-in FastAPI background loop, and paper metrics for winrate, gross/net PnL, estimated fees, max drawdown, rejected signals, close reasons, and stop reason. Live execution remains queued behind paper validation and future explicit gates.
 
 ## Guardrails
 
@@ -41,12 +41,25 @@ The hourly isolated cron must use this file as the handoff point between runs:
 
 1. Validate Docker build in the target VPS environment, then confirm GHCR pull/run health against `ghcr.io/supermedi/kraken-telegram-gateway:latest`.
 2. Validate Docker/GHCR deployment on the VPS with the public Kraken instrument metadata fallback enabled.
-3. Add longer paper validation/replay workflows and reporting for winrate, PnL net, drawdown, fees, and stop reasons.
+3. Add longer paper validation/replay workflows for repeated sessions and deterministic historical/synthetic runs.
 4. Add Kraken account-event polling/webhook abstraction for real entry fill detection only after live integration is explicitly approved.
 5. Monitor target-submission partial-block diagnostics in live-gated testing and refine only if operator feedback remains unclear.
 6. Extend audit/balance/Telegram diagnostics only if operators need retention/export, balance freshness, richer webhook failure visibility, or additional mobile command ergonomics.
 
 ## Cycle Log
+
+### 2026-08-17 12:44 UTC - Scalp Paper Report Metrics
+
+- Chose Next Queue item 3 and completed a small reporting slice before larger replay work.
+- Added `GET /scalp/{session_id}/report` with paper-only summary metrics: closed/open trade counts, wins/losses, winrate, gross PnL, estimated fees, net PnL, average win/loss, max drawdown, rejected signals, close reasons, and stop reason.
+- Enriched Telegram `/scalp_report` with the same operator-facing metrics while keeping `/scalp_status` compact.
+- Kept Kraken safety guardrails unchanged: no live-trading flag, dry-run default, credentials, Kraken order path, or live execution behavior was changed.
+
+Files changed: `kraken_telegram_gateway/gateway/app.py`, `kraken_telegram_gateway/gateway/schemas.py`, `kraken_telegram_gateway/gateway/service.py`, `tests/test_api.py`, `tests/test_telegram.py`, `README.md`, `SCALPING_MODE.md`, `DEV_LOG.md`.
+
+Tests: `python3 -m pytest tests/test_telegram.py::test_scalp_status_stop_and_report_use_paper_metrics tests/test_api.py::test_scalp_session_api_creates_and_stops_paper_session -q` -> 2 passed, 1 known Starlette warning. `python3 -m compileall -q kraken_telegram_gateway` -> OK. `python3 -m pytest -q` -> 126 passed, 1 known Starlette warning.
+
+Commit local: `Add scalp paper report metrics`.
 
 ### 2026-08-17 11:44 UTC - Opt-in Scalp Kraken Background Scheduler
 

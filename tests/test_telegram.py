@@ -10,6 +10,7 @@ from kraken_telegram_gateway.gateway.models import (
     ProcessedTelegramUpdate,
     ScalpSession,
     ScalpSessionStatus,
+    ScalpSignal,
     ScalpTrade,
     ScalpTradeStatus,
     Trade,
@@ -108,6 +109,8 @@ def test_scalp_status_stop_and_report_use_paper_metrics():
             Settings(max_amount_usdc=100),
         )
         session_id = next(line.split(": ", 1)[1] for line in start_reply.splitlines() if line.startswith("Scalp session:"))
+        scalp_session = session.get(ScalpSession, session_id)
+        assert scalp_session is not None
         session.add(
             ScalpTrade(
                 session_id=session_id,
@@ -117,9 +120,29 @@ def test_scalp_status_stop_and_report_use_paper_metrics():
                 leverage=1,
                 entry_price=10,
                 exit_price=10.1,
+                gross_pnl=6.5,
+                estimated_fees=0.5,
                 net_pnl=6,
                 status=ScalpTradeStatus.PAPER_CLOSED,
                 close_reason="min_net_pnl",
+                closed_at=scalp_session.started_at,
+            )
+        )
+        session.add(
+            ScalpTrade(
+                session_id=session_id,
+                pair="PF_LINKUSD",
+                side="sell",
+                amount_usdc=100,
+                leverage=1,
+                entry_price=10,
+                exit_price=10.2,
+                gross_pnl=-2,
+                estimated_fees=0.5,
+                net_pnl=-2.5,
+                status=ScalpTradeStatus.PAPER_CLOSED,
+                close_reason="max_hold",
+                closed_at=scalp_session.started_at,
             )
         )
         session.add(
@@ -133,6 +156,14 @@ def test_scalp_status_stop_and_report_use_paper_metrics():
                 status=ScalpTradeStatus.PAPER_OPEN,
             )
         )
+        session.add(
+            ScalpSignal(
+                session_id=session_id,
+                signal_kind="book_volume_v1",
+                score=0.1,
+                reason="imbalance below threshold",
+            )
+        )
         session.commit()
 
         status_reply = dispatch_telegram_text(f"/scalp_status {session_id}", session, Settings(max_amount_usdc=100))
@@ -140,10 +171,14 @@ def test_scalp_status_stop_and_report_use_paper_metrics():
         stop_reply = dispatch_telegram_text(f"/scalp_stop {session_id}", session, Settings(max_amount_usdc=100))
         scalp_session = session.get(ScalpSession, session_id)
 
-    assert "Trades: 1 closed, 1 open" in status_reply
-    assert "Wins: 1 | Losses: 0 / 3" in status_reply
-    assert "Net PnL: +6.00 USD" in status_reply
-    assert "winrate=100.0%" in report_reply
+    assert "Trades: 2 closed, 1 open" in status_reply
+    assert "Wins: 1 | Losses: 1 / 3" in status_reply
+    assert "Net PnL: +3.50 USD" in status_reply
+    assert "winrate=50.0%" in report_reply
+    assert "Net PnL: +3.50 USD | gross=+4.50 | frais=1.00" in report_reply
+    assert "Avg win=+6.00 | avg loss=-2.50 | max drawdown=2.50" in report_reply
+    assert "Signaux rejetes: 1" in report_reply
+    assert "Raisons de cloture: max_hold=1, min_net_pnl=1" in report_reply
     assert "Session scalp arretee" in stop_reply
     assert "Statut: stopped" in stop_reply
     assert scalp_session is not None
