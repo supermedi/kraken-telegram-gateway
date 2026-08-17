@@ -20,6 +20,7 @@ dev = [
 
 [project.scripts]
 kraken-metadata-validate = "kraken_telegram_gateway.gateway.metadata:main"
+kraken-scalp-replay = "kraken_telegram_gateway.gateway.scalp_replay:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

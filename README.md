@@ -137,6 +137,16 @@ SCALP_KRAKEN_SCHEDULER_SNAPSHOTS_PER_SESSION=1
 SCALP_KRAKEN_SCHEDULER_TIMEOUT_SECONDS=10
 ```
 
+Replay offline d'une session scalp paper depuis des snapshots deterministes JSON, JSONL ou CSV:
+
+```bash
+kraken-scalp-replay \
+  --command "/scalp_start pair=PF_LINKUSD amount_usdc=100 leverage=2 duration=60m max_hold=5m min_pnl=1" \
+  --snapshots ./snapshots.json
+```
+
+Colonnes/champs attendus: `timestamp`, `bid`, `ask`, `bid_size`, `ask_size`, et `volume_ratio` optionnel. La commande utilise une base SQLite en memoire, ne contacte pas Kraken et n'envoie aucun ordre.
+
 ## Exemple
 
 ```bash

@@ -1,9 +1,11 @@
 from datetime import timedelta
+import json
 
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from kraken_telegram_gateway.gateway.models import ScalpSession, ScalpSessionStatus, ScalpSignal, ScalpTrade, ScalpTradeStatus
 from kraken_telegram_gateway.gateway.scalping import MarketSnapshot
+from kraken_telegram_gateway.gateway.scalp_replay import load_market_snapshots, run_scalp_replay
 from kraken_telegram_gateway.gateway.service import (
     run_active_scalp_paper_sessions,
     run_scalp_paper_snapshots,
@@ -158,3 +160,60 @@ def test_scalp_scheduler_skips_active_session_without_snapshots():
     assert scheduler_result.skipped == 1
     assert result.session_id in scheduler_result.messages[0]
     assert trades == []
+
+
+def test_scalp_replay_runs_offline_report_from_json_snapshots(tmp_path):
+    snapshots_path = tmp_path / "snapshots.json"
+    snapshots_path.write_text(
+        json.dumps(
+            [
+                {
+                    "timestamp": "2026-08-17T13:45:00Z",
+                    "bid": 10,
+                    "ask": 10.01,
+                    "bid_size": 700,
+                    "ask_size": 300,
+                    "volume_ratio": 1.6,
+                },
+                {
+                    "timestamp": "2026-08-17T13:46:30Z",
+                    "bid": 10.08,
+                    "ask": 10.09,
+                    "bid_size": 500,
+                    "ask_size": 500,
+                    "volume_ratio": 1.0,
+                },
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    snapshots = load_market_snapshots(snapshots_path)
+    result = run_scalp_replay(
+        "/scalp_start pair=PF_LINKUSD amount_usdc=100 leverage=2 duration=60m max_hold=5m min_pnl=1",
+        snapshots,
+    )
+
+    assert result["runner"]["status"] == ScalpSessionStatus.PAPER_ACTIVE
+    assert result["report"]["closed_trades"] == 1
+    assert result["report"]["wins"] == 1
+    assert result["report"]["net_pnl"] > 1
+
+
+def test_scalp_replay_loads_csv_snapshots(tmp_path):
+    snapshots_path = tmp_path / "snapshots.csv"
+    snapshots_path.write_text(
+        "\n".join(
+            [
+                "timestamp,bid,ask,bid_size,ask_size,volume_ratio",
+                "2026-08-17T13:45:00Z,10,10.01,700,300,1.6",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    snapshots = load_market_snapshots(snapshots_path)
+
+    assert len(snapshots) == 1
+    assert snapshots[0].bid == 10
+    assert snapshots[0].volume_ratio == 1.6

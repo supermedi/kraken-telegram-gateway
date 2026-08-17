@@ -129,10 +129,11 @@ Implemented:
 - Injectable active-session scheduler plus manual API ticks.
 - Kraken Futures public WebSocket adapter for book/ticker_lite snapshots feeding paper sessions.
 - Opt-in FastAPI background loop for active paper sessions via `SCALP_KRAKEN_SCHEDULER_ENABLED=true`.
+- Offline deterministic replay CLI `kraken-scalp-replay` for JSON, JSONL, or CSV snapshots. It runs a paper session in an in-memory SQLite database and emits a JSON report without contacting Kraken.
 
 Not implemented yet:
 
-- Longer paper validation runs and replay support.
+- Richer historical-data source adapters and multi-session replay summaries.
 - Live order submission.
 
 ## Implementation Phases
@@ -143,7 +144,8 @@ Not implemented yet:
 4. Done: add background scheduling for active paper sessions through an injectable snapshot provider and manual API tick.
 5. Done: add Kraken WebSocket market-data integration for manual paper scheduler ticks through API and Telegram.
 6. Done: add a periodic opt-in background loop for active paper sessions.
-7. Only after repeated paper validation, add a separate `SCALPING_LIVE_ENABLED=true` gate for live orders.
+7. Done: add a deterministic offline replay CLI for saved JSON/JSONL/CSV snapshots.
+8. Only after repeated paper validation, add a separate `SCALPING_LIVE_ENABLED=true` gate for live orders.
 
 ## Safety Notes
 
