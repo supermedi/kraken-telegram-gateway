@@ -294,7 +294,7 @@ def test_entry_order_payload_converts_usdc_to_contract_size_with_metadata():
     client = KrakenClient(Settings())
     instrument = InstrumentMetadata(
         symbol="PF_XBTUSD",
-        contract_value_usdc=Decimal("5"),
+        contract_value_usdc=Decimal("0.0001"),
         size_step=Decimal("0.5"),
         min_size=Decimal("1"),
     )
@@ -305,8 +305,39 @@ def test_entry_order_payload_converts_usdc_to_contract_size_with_metadata():
         "symbol": "PF_XBTUSD",
         "orderType": "lmt",
         "side": "buy",
-        "size": "40",
+        "size": "30.5",
         "limitPrice": "65000",
+        "reduceOnly": False,
+    }
+
+
+def test_entry_order_payload_converts_linear_contract_size_using_limit_price():
+    trade = Trade(
+        id="trade-link",
+        pair="PF_LINKUSD",
+        side="buy",
+        amount_usdc=100,
+        entry_type="limit",
+        entry_price=9.356,
+        targets_json="[]",
+        leverage=10,
+    )
+    client = KrakenClient(Settings())
+    instrument = InstrumentMetadata(
+        symbol="PF_LINKUSD",
+        contract_value_usdc=Decimal("1"),
+        size_step=Decimal("0.1"),
+        min_size=Decimal("0.1"),
+    )
+
+    payload = client.build_entry_order_payload(trade, instrument)
+
+    assert payload == {
+        "symbol": "PF_LINKUSD",
+        "orderType": "lmt",
+        "side": "buy",
+        "size": "106.8",
+        "limitPrice": "9.356",
         "reduceOnly": False,
     }
 
@@ -327,7 +358,7 @@ def test_target_order_payload_is_reduce_only_and_uses_target_amount():
     client = KrakenClient(Settings())
     instrument = InstrumentMetadata(
         symbol="PF_XBTUSD",
-        contract_value_usdc=Decimal("5"),
+        contract_value_usdc=Decimal("0.0001"),
         size_step=Decimal("0.5"),
         min_size=Decimal("1"),
     )
@@ -338,7 +369,7 @@ def test_target_order_payload_is_reduce_only_and_uses_target_amount():
         "symbol": "PF_XBTUSD",
         "orderType": "lmt",
         "side": "sell",
-        "size": "16",
+        "size": "11.5",
         "limitPrice": "67000",
         "reduceOnly": True,
     }
@@ -372,7 +403,7 @@ def test_local_instrument_metadata_provider_loads_cached_json(tmp_path):
         {
           "instruments": {
             "PF_XBTUSD": {
-              "contract_value_usdc": "5",
+              "contract_value_usdc": "0.0001",
               "size_step": "0.5",
               "min_size": "1"
             }
@@ -389,7 +420,7 @@ def test_local_instrument_metadata_provider_loads_cached_json(tmp_path):
 
     assert instrument == InstrumentMetadata(
         symbol="PF_XBTUSD",
-        contract_value_usdc=Decimal("5"),
+        contract_value_usdc=Decimal("0.0001"),
         size_step=Decimal("0.5"),
         min_size=Decimal("1"),
     )
@@ -474,7 +505,7 @@ def test_live_entry_submission_posts_signed_order_after_metadata_payload_is_prep
           "instruments": [
             {
               "symbol": "PF_XBTUSD",
-              "contract_value_usdc": "5",
+              "contract_value_usdc": "0.0001",
               "size_step": "0.5",
               "min_size": "1"
             }
@@ -505,7 +536,7 @@ def test_live_entry_submission_posts_signed_order_after_metadata_payload_is_prep
             "POST",
             "https://futures.kraken.com/derivatives/api/v3/sendorder",
             calls[0][2],
-            "symbol=PF_XBTUSD&orderType=lmt&side=buy&size=40&limitPrice=65000&reduceOnly=false",
+            "symbol=PF_XBTUSD&orderType=lmt&side=buy&size=30.5&limitPrice=65000&reduceOnly=false",
             10,
         )
     ]
@@ -547,7 +578,7 @@ def test_live_target_submission_posts_reduce_only_order_after_metadata_payload_i
           "instruments": [
             {
               "symbol": "PF_XBTUSD",
-              "contract_value_usdc": "5",
+              "contract_value_usdc": "0.0001",
               "size_step": "0.5",
               "min_size": "1"
             }
@@ -573,7 +604,7 @@ def test_live_target_submission_posts_reduce_only_order_after_metadata_payload_i
         "external_order_id": "OID-456",
         "message": "Live Kraken target order submitted.",
     }
-    assert calls[0][3] == "symbol=PF_XBTUSD&orderType=lmt&side=sell&size=16&limitPrice=67000&reduceOnly=true"
+    assert calls[0][3] == "symbol=PF_XBTUSD&orderType=lmt&side=sell&size=11.5&limitPrice=67000&reduceOnly=true"
 
 
 def test_live_entry_submission_is_blocked_when_kraken_rejects_order(tmp_path, monkeypatch):
@@ -595,7 +626,7 @@ def test_live_entry_submission_is_blocked_when_kraken_rejects_order(tmp_path, mo
           "instruments": [
             {
               "symbol": "PF_XBTUSD",
-              "contract_value_usdc": "5",
+              "contract_value_usdc": "0.0001",
               "size_step": "0.5",
               "min_size": "1"
             }
@@ -647,7 +678,7 @@ def test_live_entry_submission_is_blocked_when_send_status_rejects_order(tmp_pat
           "instruments": [
             {
               "symbol": "PF_XBTUSD",
-              "contract_value_usdc": "5",
+              "contract_value_usdc": "0.0001",
               "size_step": "0.5",
               "min_size": "1"
             }

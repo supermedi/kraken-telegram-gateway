@@ -354,6 +354,7 @@ class KrakenClient:
         size = calculate_contract_size(
             amount_usdc=Decimal(str(amount_usdc)),
             leverage=Decimal(str(leverage)),
+            price=Decimal(str(price)),
             instrument=instrument,
         )
         return {
@@ -492,11 +493,18 @@ def format_send_order_rejection(send_status: Mapping[str, object]) -> str:
     return "; ".join(details)
 
 
-def calculate_contract_size(amount_usdc: Decimal, leverage: Decimal, instrument: InstrumentMetadata) -> Decimal:
+def calculate_contract_size(
+    amount_usdc: Decimal,
+    leverage: Decimal,
+    price: Decimal,
+    instrument: InstrumentMetadata,
+) -> Decimal:
     if amount_usdc <= 0:
         raise KrakenOrderPayloadError("amount_usdc must be positive")
     if leverage <= 0:
         raise KrakenOrderPayloadError("leverage must be positive")
+    if price <= 0:
+        raise KrakenOrderPayloadError("price must be positive")
     if instrument.contract_value_usdc <= 0:
         raise KrakenOrderPayloadError("instrument contract_value_usdc must be positive")
     if instrument.size_step <= 0:
@@ -504,7 +512,7 @@ def calculate_contract_size(amount_usdc: Decimal, leverage: Decimal, instrument:
     if instrument.min_size <= 0:
         raise KrakenOrderPayloadError("instrument min_size must be positive")
 
-    raw_size = (amount_usdc * leverage) / instrument.contract_value_usdc
+    raw_size = (amount_usdc * leverage) / (price * instrument.contract_value_usdc)
     steps = (raw_size / instrument.size_step).to_integral_value(rounding=ROUND_DOWN)
     size = steps * instrument.size_step
     if size < instrument.min_size:
