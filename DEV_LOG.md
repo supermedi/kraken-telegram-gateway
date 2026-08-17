@@ -22,8 +22,8 @@ The hourly isolated cron must use this file as the handoff point between runs:
 - Kraken Futures: authenticated REST signing, private request preparation, read-only `/derivatives/api/v3/accounts` balance lookup exposed through Telegram `/balance`/`/solde` and API `GET /balance` with optional filters, a local-first/public-fallback instrument metadata provider, a metadata cache validator CLI, safe entry/target limit-order payload boundaries, live order POST submission to `/derivatives/api/v3/sendorder`, and live order cancellation via `/derivatives/api/v3/cancelorder` are implemented behind the existing live gates.
 - Deployment: Dockerfile, Docker Compose, GHCR publish workflow, final public image name `ghcr.io/supermedi/kraken-telegram-gateway:latest`, and deployment documentation are in place; runtime secrets stay in local `.env`.
 - GitHub: dedicated public repository created and initial code pushed to `https://github.com/supermedi/kraken-telegram-gateway`.
-- Verification baseline: `python3 -m pytest -q` was last reported passing with 129 tests on 2026-08-17.
-- Scalping mode: V1 foundation implemented as a separate paper-only session mode with persistent `ScalpSession`/`ScalpTrade`/`ScalpSignal` tables, `/scalp_start`, `/scalp_status`, `/scalp_stop`, `/scalp_report`, `/scalp_tick_kraken`, API endpoints including `GET /scalp/{session_id}/report`, multi-minute `max_hold`, synthetic market-data runner, injectable active-session scheduler, Kraken Futures public WebSocket snapshot collection, opt-in FastAPI background loop, offline deterministic replay CLI for one or more JSON/JSONL/CSV snapshot files, multi-file replay summaries, and paper metrics for winrate, gross/net PnL, estimated fees, max drawdown, rejected signals, close reasons, and stop reason. Live execution remains queued behind paper validation and future explicit gates.
+- Verification baseline: `python3 -m pytest -q` was last reported passing with 130 tests on 2026-08-17.
+- Scalping mode: V1 foundation implemented as a separate paper-only session mode with persistent `ScalpSession`/`ScalpTrade`/`ScalpSignal` tables, `/scalp_start`, `/scalp_status`, `/scalp_stop`, `/scalp_report`, `/scalp_tick_kraken`, API endpoints including `GET /scalp/{session_id}/report`, multi-minute `max_hold`, synthetic market-data runner, injectable active-session scheduler, Kraken Futures public WebSocket snapshot collection, opt-in FastAPI background loop, offline deterministic replay CLI for one or more JSON/JSONL/CSV snapshot files, common historical book export aliases, multi-file replay summaries, and paper metrics for winrate, gross/net PnL, estimated fees, max drawdown, rejected signals, close reasons, and stop reason. Live execution remains queued behind paper validation and future explicit gates.
 
 ## Guardrails
 
@@ -41,12 +41,25 @@ The hourly isolated cron must use this file as the handoff point between runs:
 
 1. Validate Docker build in the target VPS environment, then confirm GHCR pull/run health against `ghcr.io/supermedi/kraken-telegram-gateway:latest`.
 2. Validate Docker/GHCR deployment on the VPS with the public Kraken instrument metadata fallback enabled.
-3. Add richer historical-data source adapters for longer paper validation.
+3. Add exchange/download-specific historical-data adapters for longer paper validation.
 4. Add Kraken account-event polling/webhook abstraction for real entry fill detection only after live integration is explicitly approved.
 5. Monitor target-submission partial-block diagnostics in live-gated testing and refine only if operator feedback remains unclear.
 6. Extend audit/balance/Telegram diagnostics only if operators need retention/export, balance freshness, richer webhook failure visibility, or additional mobile command ergonomics.
 
 ## Cycle Log
+
+### 2026-08-17 15:47 UTC - Historical Book Replay Aliases
+
+- Chose Next Queue item 3 and completed a small historical-data adapter slice for longer paper validation.
+- Extended `kraken-scalp-replay` snapshot loading to accept common historical book export aliases: `datetime`/`date`, `best_bid`/`best_ask`, bid/ask quantity or volume fields, and camelCase `volumeRatio`.
+- Preserved the existing canonical JSON/JSONL/CSV fields and replay output shapes for compatibility.
+- Kept Kraken safety guardrails unchanged: no live-trading flag, dry-run default, credentials, Kraken network-order path, or live execution behavior was changed.
+
+Files changed: `kraken_telegram_gateway/gateway/scalp_replay.py`, `tests/test_scalping.py`, `README.md`, `SCALPING_MODE.md`, `DEV_LOG.md`.
+
+Tests: `python3 -m pytest tests/test_scalping.py -q` -> 9 passed. `python3 -m compileall -q kraken_telegram_gateway` -> OK. `python3 -m pytest -q` -> 130 passed, 1 known Starlette warning.
+
+Commit local: `Accept historical book aliases in scalp replay`.
 
 ### 2026-08-17 14:48 UTC - Multi-File Scalp Replay Summary
 

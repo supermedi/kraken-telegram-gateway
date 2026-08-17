@@ -145,7 +145,7 @@ kraken-scalp-replay \
   --snapshots ./snapshots-day-1.json ./snapshots-day-2.csv
 ```
 
-Colonnes/champs attendus: `timestamp`, `bid`, `ask`, `bid_size`, `ask_size`, et `volume_ratio` optionnel. Avec un seul fichier, la commande emet le rapport de session comme avant; avec plusieurs fichiers, elle emet `runs` plus une synthese multi-replay: replays, trades fermes/ouverts, wins/losses, winrate, PnL brut/net, frais estimes, pire drawdown par replay, signaux rejetes, raisons de cloture et raisons d'arret. La commande utilise une base SQLite en memoire, ne contacte pas Kraken et n'envoie aucun ordre.
+Colonnes/champs attendus: `timestamp`, `bid`, `ask`, `bid_size`, `ask_size`, et `volume_ratio` optionnel. Les alias historiques courants sont aussi acceptes: `time`/`created_at`/`datetime`/`date`, `best_bid`/`bid_price`/`bidPrice`, `best_ask`/`ask_price`/`askPrice`, `bid_qty`/`bidQty`/`bid_volume`/`bidVolume`/`bidsize`, `ask_qty`/`askQty`/`ask_volume`/`askVolume`/`asksize`, et `volumeRatio`/`volume_ratio_1m`. Avec un seul fichier, la commande emet le rapport de session comme avant; avec plusieurs fichiers, elle emet `runs` plus une synthese multi-replay: replays, trades fermes/ouverts, wins/losses, winrate, PnL brut/net, frais estimes, pire drawdown par replay, signaux rejetes, raisons de cloture et raisons d'arret. La commande utilise une base SQLite en memoire, ne contacte pas Kraken et n'envoie aucun ordre.
 
 ## Exemple
 

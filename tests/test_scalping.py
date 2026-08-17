@@ -219,6 +219,28 @@ def test_scalp_replay_loads_csv_snapshots(tmp_path):
     assert snapshots[0].volume_ratio == 1.6
 
 
+def test_scalp_replay_loads_common_historical_book_aliases(tmp_path):
+    snapshots_path = tmp_path / "historical_book.csv"
+    snapshots_path.write_text(
+        "\n".join(
+            [
+                "datetime,best_bid,best_ask,bid_qty,ask_qty,volumeRatio",
+                "2026-08-17T13:45:00Z,10,10.01,700,300,1.6",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    snapshots = load_market_snapshots(snapshots_path)
+
+    assert len(snapshots) == 1
+    assert snapshots[0].bid == 10
+    assert snapshots[0].ask == 10.01
+    assert snapshots[0].bid_size == 700
+    assert snapshots[0].ask_size == 300
+    assert snapshots[0].volume_ratio == 1.6
+
+
 def test_scalp_replay_batch_summarizes_multiple_snapshot_files(tmp_path):
     profitable_path = tmp_path / "profitable.jsonl"
     profitable_path.write_text(

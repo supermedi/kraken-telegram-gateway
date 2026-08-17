@@ -94,16 +94,24 @@ def summarize_scalp_replays(runs: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def snapshot_from_mapping(row: dict[str, Any]) -> MarketSnapshot:
-    timestamp = row.get("timestamp") or row.get("time") or row.get("created_at")
+    timestamp = _first_value(row, ["timestamp", "time", "created_at", "datetime", "date"])
     if timestamp is None:
         raise ValueError("snapshot is missing timestamp")
     return MarketSnapshot(
         timestamp=_parse_timestamp(timestamp),
-        bid=_required_float(row, "bid"),
-        ask=_required_float(row, "ask"),
-        bid_size=_required_float(row, "bid_size"),
-        ask_size=_required_float(row, "ask_size"),
-        volume_ratio=float(row.get("volume_ratio") or 1),
+        bid=_required_float(row, "bid", aliases=["best_bid", "bid_price", "bidPrice"]),
+        ask=_required_float(row, "ask", aliases=["best_ask", "ask_price", "askPrice"]),
+        bid_size=_required_float(
+            row,
+            "bid_size",
+            aliases=["bid_qty", "bidQty", "bid_volume", "bidVolume", "bidsize"],
+        ),
+        ask_size=_required_float(
+            row,
+            "ask_size",
+            aliases=["ask_qty", "askQty", "ask_volume", "askVolume", "asksize"],
+        ),
+        volume_ratio=_optional_float(row, ["volume_ratio", "volumeRatio", "volume_ratio_1m"], default=1),
     )
 
 
@@ -133,8 +141,24 @@ def _parse_timestamp(value: Any) -> datetime:
     return parsed.astimezone(timezone.utc)
 
 
-def _required_float(row: dict[str, Any], key: str) -> float:
-    value = row.get(key)
+def _first_value(row: dict[str, Any], keys: list[str]) -> Any:
+    for key in keys:
+        value = row.get(key)
+        if value is not None and value != "":
+            return value
+    return None
+
+
+def _optional_float(row: dict[str, Any], keys: list[str], *, default: float) -> float:
+    value = _first_value(row, keys)
+    if value is None:
+        return default
+    return float(value)
+
+
+def _required_float(row: dict[str, Any], key: str, *, aliases: list[str] | None = None) -> float:
+    keys = [key, *(aliases or [])]
+    value = _first_value(row, keys)
     if value is None or value == "":
         raise ValueError(f"snapshot is missing {key}")
     return float(value)

@@ -129,11 +129,11 @@ Implemented:
 - Injectable active-session scheduler plus manual API ticks.
 - Kraken Futures public WebSocket adapter for book/ticker_lite snapshots feeding paper sessions.
 - Opt-in FastAPI background loop for active paper sessions via `SCALP_KRAKEN_SCHEDULER_ENABLED=true`.
-- Offline deterministic replay CLI `kraken-scalp-replay` for one or more JSON, JSONL, or CSV snapshot files. It runs paper sessions in an in-memory SQLite database and emits either a single-session JSON report or a multi-replay summary without contacting Kraken.
+- Offline deterministic replay CLI `kraken-scalp-replay` for one or more JSON, JSONL, or CSV snapshot files, including common historical-book field aliases such as `best_bid`, `best_ask`, `bid_qty`, `ask_qty`, and `volumeRatio`. It runs paper sessions in an in-memory SQLite database and emits either a single-session JSON report or a multi-replay summary without contacting Kraken.
 
 Not implemented yet:
 
-- Richer historical-data source adapters.
+- Richer exchange/download-specific historical-data adapters.
 - Live order submission.
 
 ## Implementation Phases
@@ -146,7 +146,8 @@ Not implemented yet:
 6. Done: add a periodic opt-in background loop for active paper sessions.
 7. Done: add a deterministic offline replay CLI for saved JSON/JSONL/CSV snapshots.
 8. Done: add multi-file replay summaries for comparing paper validation runs.
-9. Only after repeated paper validation, add a separate `SCALPING_LIVE_ENABLED=true` gate for live orders.
+9. Done: accept common historical book export aliases in replay inputs.
+10. Only after repeated paper validation, add a separate `SCALPING_LIVE_ENABLED=true` gate for live orders.
 
 ## Safety Notes
 
