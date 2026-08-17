@@ -22,6 +22,7 @@ from kraken_telegram_gateway.gateway.models import (
 )
 from kraken_telegram_gateway.gateway.parser import parse_scalp_start_command, parse_trade_command
 from kraken_telegram_gateway.gateway.risk import validate_risk
+from kraken_telegram_gateway.gateway.scalping import MarketSnapshot, evaluate_scalp_signal
 from kraken_telegram_gateway.gateway.schemas import (
     AuditEventList,
     AuditEventTypeList,
@@ -156,6 +157,86 @@ def get_scalp_session_detail(session_id: str, session: Session) -> ScalpSessionD
         .limit(20)
     ).all()
     return ScalpSessionDetail(session=scalp_session, trades=list(trades), signals=list(signals))
+
+
+def run_scalp_paper_snapshots(
+    session_id: str,
+    snapshots: list[MarketSnapshot],
+    session: Session,
+) -> ScalpSessionResult:
+    scalp_session = session.get(ScalpSession, session_id)
+    if scalp_session is None:
+        return ScalpSessionResult(session_id=session_id, status="not_found", message="Session scalp introuvable.")
+    if scalp_session.status != ScalpSessionStatus.PAPER_ACTIVE:
+        return ScalpSessionResult(
+            session_id=scalp_session.id,
+            status=scalp_session.status,
+            message="Session scalp inactive; aucun snapshot traite.",
+        )
+    if not snapshots:
+        return ScalpSessionResult(
+            session_id=scalp_session.id,
+            status=scalp_session.status,
+            message="Aucun snapshot market-data a traiter.",
+        )
+
+    opened = 0
+    closed = 0
+    for snapshot in sorted(snapshots, key=lambda item: item.timestamp):
+        if _scalp_session_elapsed(scalp_session, snapshot):
+            _complete_scalp_session(scalp_session, "duration_elapsed", session)
+            break
+
+        open_trade = _get_open_scalp_trade(scalp_session.id, session)
+        if open_trade is not None:
+            if _maybe_close_scalp_trade(scalp_session, open_trade, snapshot, session):
+                closed += 1
+                if _scalp_loss_count(scalp_session.id, session) >= scalp_session.max_losses:
+                    _complete_scalp_session(scalp_session, "max_losses", session)
+                    break
+            continue
+
+        decision = evaluate_scalp_signal(snapshot, side_mode=scalp_session.side_mode)
+        signal = ScalpSignal(
+            session_id=scalp_session.id,
+            signal_kind="book_volume_v1",
+            score=decision.score,
+            spread=snapshot.spread,
+            book_imbalance=snapshot.book_imbalance,
+            volume_ratio=snapshot.volume_ratio,
+            reason=decision.reason,
+            created_at=snapshot.timestamp,
+        )
+        session.add(signal)
+        if decision.side is None:
+            continue
+
+        entry_price = snapshot.ask if decision.side == "buy" else snapshot.bid
+        scalp_trade = ScalpTrade(
+            session_id=scalp_session.id,
+            pair=scalp_session.pair,
+            side=decision.side,
+            amount_usdc=scalp_session.amount_usdc,
+            leverage=scalp_session.leverage,
+            entry_price=entry_price,
+            opened_at=snapshot.timestamp,
+            created_at=snapshot.timestamp,
+            updated_at=snapshot.timestamp,
+        )
+        session.add(scalp_trade)
+        session.flush()
+        signal.scalp_trade_id = scalp_trade.id
+        session.add(signal)
+        opened += 1
+
+    scalp_session.updated_at = utc_now()
+    session.add(scalp_session)
+    session.commit()
+    return ScalpSessionResult(
+        session_id=scalp_session.id,
+        status=scalp_session.status,
+        message=f"Paper runner: {opened} trade(s) ouverts, {closed} trade(s) fermes.",
+    )
 
 
 def confirm_trade(trade_id: str, session: Session, settings: Settings) -> ConfirmResult:
@@ -653,6 +734,93 @@ def format_seconds(seconds: int) -> str:
     if seconds % 60 == 0:
         return f"{seconds // 60}m"
     return f"{seconds}s"
+
+
+def _get_open_scalp_trade(session_id: str, session: Session) -> ScalpTrade | None:
+    return session.exec(
+        select(ScalpTrade).where(
+            ScalpTrade.session_id == session_id,
+            ScalpTrade.status == ScalpTradeStatus.PAPER_OPEN,
+        )
+    ).first()
+
+
+def _maybe_close_scalp_trade(
+    scalp_session: ScalpSession,
+    trade: ScalpTrade,
+    snapshot: MarketSnapshot,
+    session: Session,
+) -> bool:
+    exit_price = snapshot.bid if trade.side == "buy" else snapshot.ask
+    gross_pnl = _scalp_gross_pnl(trade, exit_price)
+    estimated_fees = _estimate_scalp_fees(trade)
+    net_pnl = gross_pnl - estimated_fees
+    hold_seconds = (snapshot.timestamp - trade.opened_at).total_seconds()
+
+    close_reason = None
+    if net_pnl >= scalp_session.min_net_pnl:
+        close_reason = "min_net_pnl"
+    elif net_pnl <= -scalp_session.min_net_pnl:
+        close_reason = "max_loss_per_trade"
+    elif hold_seconds >= scalp_session.max_hold_seconds:
+        close_reason = "max_hold"
+
+    if close_reason is None:
+        return False
+
+    trade.exit_price = exit_price
+    trade.gross_pnl = gross_pnl
+    trade.estimated_fees = estimated_fees
+    trade.net_pnl = net_pnl
+    trade.status = ScalpTradeStatus.PAPER_CLOSED
+    trade.close_reason = close_reason
+    trade.closed_at = snapshot.timestamp
+    trade.updated_at = snapshot.timestamp
+    session.add(trade)
+    session.flush()
+    return True
+
+
+def _scalp_gross_pnl(trade: ScalpTrade, exit_price: float) -> float:
+    if trade.entry_price <= 0:
+        return 0
+    direction = 1 if trade.side == "buy" else -1
+    move_ratio = (exit_price - trade.entry_price) / trade.entry_price
+    return trade.amount_usdc * trade.leverage * move_ratio * direction
+
+
+def _estimate_scalp_fees(trade: ScalpTrade) -> float:
+    taker_round_trip_rate = 0.001
+    return trade.amount_usdc * trade.leverage * taker_round_trip_rate
+
+
+def _scalp_loss_count(session_id: str, session: Session) -> int:
+    closed_trades = session.exec(
+        select(ScalpTrade).where(
+            ScalpTrade.session_id == session_id,
+            ScalpTrade.status == ScalpTradeStatus.PAPER_CLOSED,
+        )
+    ).all()
+    return len([trade for trade in closed_trades if (trade.net_pnl or 0) < 0])
+
+
+def _scalp_session_elapsed(scalp_session: ScalpSession, snapshot: MarketSnapshot) -> bool:
+    return (snapshot.timestamp - scalp_session.started_at).total_seconds() >= scalp_session.duration_seconds
+
+
+def _complete_scalp_session(scalp_session: ScalpSession, reason: str, session: Session) -> None:
+    scalp_session.status = ScalpSessionStatus.COMPLETED
+    scalp_session.stop_reason = reason
+    scalp_session.stopped_at = utc_now()
+    scalp_session.updated_at = utc_now()
+    session.add(scalp_session)
+    session.add(
+        AuditEvent(
+            event_type="scalp_session_completed",
+            message=f"Scalp paper session {scalp_session.id} completed: {reason}.",
+        )
+    )
+    session.flush()
 
 
 def format_optional_decimal(value) -> str:

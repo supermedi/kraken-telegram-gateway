@@ -23,7 +23,7 @@ The hourly isolated cron must use this file as the handoff point between runs:
 - Deployment: Dockerfile, Docker Compose, GHCR publish workflow, final public image name `ghcr.io/supermedi/kraken-telegram-gateway:latest`, and deployment documentation are in place; runtime secrets stay in local `.env`.
 - GitHub: dedicated public repository created and initial code pushed to `https://github.com/supermedi/kraken-telegram-gateway`.
 - Verification baseline: `python3 -m pytest -q` was last reported passing with 107 tests on 2026-08-17.
-- Scalping mode: V1 foundation implemented as a separate paper-only session mode with persistent `ScalpSession`/`ScalpTrade`/`ScalpSignal` tables, `/scalp_start`, `/scalp_status`, `/scalp_stop`, `/scalp_report`, API endpoints, multi-minute `max_hold`, and net-PnL reporting. Market-data runner/WebSocket automation remains queued before any live gate.
+- Scalping mode: V1 foundation implemented as a separate paper-only session mode with persistent `ScalpSession`/`ScalpTrade`/`ScalpSignal` tables, `/scalp_start`, `/scalp_status`, `/scalp_stop`, `/scalp_report`, API endpoints, multi-minute `max_hold`, synthetic market-data runner, and net-PnL reporting. Background scheduling and Kraken WebSocket automation remain queued before any live gate.
 
 ## Guardrails
 
@@ -41,12 +41,11 @@ The hourly isolated cron must use this file as the handoff point between runs:
 
 1. Validate Docker build in the target VPS environment, then confirm GHCR pull/run health against `ghcr.io/supermedi/kraken-telegram-gateway:latest`.
 2. Validate Docker/GHCR deployment on the VPS with the public Kraken instrument metadata fallback enabled.
-3. Add scalping market-data adapter interface and deterministic tests with synthetic ticks/book snapshots.
-4. Add scalping paper runner loop with one open trade at a time, max-hold/duration/max-loss stop rules, and status/report updates.
-5. Add Kraken WebSocket market-data integration for scalping paper sessions.
-6. Add Kraken account-event polling/webhook abstraction for real entry fill detection only after live integration is explicitly approved.
-7. Monitor target-submission partial-block diagnostics in live-gated testing and refine only if operator feedback remains unclear.
-8. Extend audit/balance/Telegram diagnostics only if operators need retention/export, balance freshness, richer webhook failure visibility, or additional mobile command ergonomics.
+3. Add background scheduling for active scalping paper sessions.
+4. Add Kraken WebSocket market-data integration for scalping paper sessions.
+5. Add Kraken account-event polling/webhook abstraction for real entry fill detection only after live integration is explicitly approved.
+6. Monitor target-submission partial-block diagnostics in live-gated testing and refine only if operator feedback remains unclear.
+7. Extend audit/balance/Telegram diagnostics only if operators need retention/export, balance freshness, richer webhook failure visibility, or additional mobile command ergonomics.
 
 ## Cycle Log
 
@@ -72,6 +71,18 @@ Tests: documentation-only change; no runtime tests required.
 Files changed: `kraken_telegram_gateway/gateway/models.py`, `kraken_telegram_gateway/gateway/schemas.py`, `kraken_telegram_gateway/gateway/parser.py`, `kraken_telegram_gateway/gateway/service.py`, `kraken_telegram_gateway/gateway/telegram.py`, `kraken_telegram_gateway/gateway/app.py`, `tests/test_telegram.py`, `tests/test_api.py`, `README.md`, `SCALPING_MODE.md`, `DEV_LOG.md`.
 
 Tests: targeted scalping Telegram/API tests passed.
+
+### 2026-08-17 02:30 UTC - Scalping Synthetic Paper Runner
+
+- Added `MarketSnapshot` and V1 signal evaluation from spread, top-of-book imbalance, and local volume ratio.
+- Added `run_scalp_paper_snapshots` for deterministic paper runs on synthetic market snapshots.
+- The runner opens one paper trade at a time, records `ScalpSignal`, closes on net profit/loss threshold or `max_hold`, completes the session on `max_losses` or `duration`, and estimates round-trip taker fees before net PnL.
+- Added tests for profitable synthetic trades, auto-stop after max losses, and multi-minute `max_hold` closure.
+- Kept live Kraken execution untouched; no WebSocket or background scheduler is started yet.
+
+Files changed: `kraken_telegram_gateway/gateway/scalping.py`, `kraken_telegram_gateway/gateway/service.py`, `tests/test_scalping.py`, `SCALPING_MODE.md`, `DEV_LOG.md`.
+
+Tests: `python3 -m pytest tests/test_scalping.py -q` -> 3 passed. `python3 -m compileall -q kraken_telegram_gateway` -> OK.
 
 ### 2026-08-17 01:44 UTC - Target Partial-Block Diagnostics
 

@@ -121,22 +121,25 @@ Implemented:
 - API endpoints `POST /commands/scalp-start`, `GET /scalp/{session_id}`, and `POST /commands/scalp-stop/{session_id}`.
 - Paper-only enforcement: `mode=live` is rejected.
 - Compact status/report formatting and basic PnL metrics from persisted paper trades.
+- Synthetic market-data adapter and paper runner for deterministic tests.
+- V1 signal evaluation from spread, top-of-book imbalance, and local volume ratio.
+- Runner rules for one open trade at a time, net-PnL close, max-hold close, duration stop, and max-losses stop.
 
 Not implemented yet:
 
 - WebSocket market-data ingestion.
-- Automated signal evaluation loop.
-- Paper fill simulation from real or replayed market data.
-- Automatic closing on `duration`, `max_hold`, or `max_losses`.
+- Background loop scheduling for live paper sessions.
+- Paper fill simulation from real Kraken WebSocket or replayed market data.
 - Live order submission.
 
 ## Implementation Phases
 
 1. Done: add command parsing, data models, Telegram/API commands, and paper session state without market-data automation.
-2. Add market-data adapter interface and deterministic tests with synthetic ticks/book snapshots.
-3. Add paper runner loop with one open trade at a time and stop rules.
-4. Add Kraken WebSocket market-data integration.
-5. Only after repeated paper validation, add a separate `SCALPING_LIVE_ENABLED=true` gate for live orders.
+2. Done: add market-data adapter interface and deterministic tests with synthetic ticks/book snapshots.
+3. Done: add paper runner with one open trade at a time and core stop rules.
+4. Add background scheduling for active paper sessions.
+5. Add Kraken WebSocket market-data integration.
+6. Only after repeated paper validation, add a separate `SCALPING_LIVE_ENABLED=true` gate for live orders.
 
 ## Safety Notes
 
