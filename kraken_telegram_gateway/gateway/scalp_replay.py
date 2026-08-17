@@ -42,6 +42,57 @@ def run_scalp_replay(command: str, snapshots: list[MarketSnapshot]) -> dict[str,
         }
 
 
+def run_scalp_replay_batch(command: str, snapshot_paths: list[Path]) -> dict[str, Any]:
+    runs = []
+    for path in snapshot_paths:
+        replay = run_scalp_replay(command, load_market_snapshots(path))
+        replay["source"] = str(path)
+        runs.append(replay)
+    return {
+        "runs": runs,
+        "summary": summarize_scalp_replays(runs),
+    }
+
+
+def summarize_scalp_replays(runs: list[dict[str, Any]]) -> dict[str, Any]:
+    close_reasons: dict[str, int] = {}
+    stop_reasons: dict[str, int] = {}
+    totals = {
+        "replays": len(runs),
+        "closed_trades": 0,
+        "open_trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "gross_pnl": 0.0,
+        "estimated_fees": 0.0,
+        "net_pnl": 0.0,
+        "max_drawdown": 0.0,
+        "rejected_signals": 0,
+    }
+    for run in runs:
+        report = run["report"]
+        totals["closed_trades"] += report["closed_trades"]
+        totals["open_trades"] += report["open_trades"]
+        totals["wins"] += report["wins"]
+        totals["losses"] += report["losses"]
+        totals["gross_pnl"] += report["gross_pnl"]
+        totals["estimated_fees"] += report["estimated_fees"]
+        totals["net_pnl"] += report["net_pnl"]
+        totals["max_drawdown"] = max(totals["max_drawdown"], report["max_drawdown"])
+        totals["rejected_signals"] += report["rejected_signals"]
+        for reason, count in report["close_reasons"].items():
+            close_reasons[reason] = close_reasons.get(reason, 0) + count
+        if report.get("stop_reason"):
+            stop_reason = report["stop_reason"]
+            stop_reasons[stop_reason] = stop_reasons.get(stop_reason, 0) + 1
+
+    totals["win_rate"] = (totals["wins"] / totals["closed_trades"] * 100) if totals["closed_trades"] else 0.0
+    totals["avg_net_pnl_per_replay"] = totals["net_pnl"] / len(runs) if runs else 0.0
+    totals["close_reasons"] = close_reasons
+    totals["stop_reasons"] = stop_reasons
+    return totals
+
+
 def snapshot_from_mapping(row: dict[str, Any]) -> MarketSnapshot:
     timestamp = row.get("timestamp") or row.get("time") or row.get("created_at")
     if timestamp is None:
@@ -92,11 +143,19 @@ def _required_float(row: dict[str, Any], key: str) -> float:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run an offline paper scalping replay from deterministic snapshots.")
     parser.add_argument("--command", required=True, help="Full /scalp_start command used to configure the paper session.")
-    parser.add_argument("--snapshots", required=True, type=Path, help="CSV, JSON list, or JSONL snapshot file.")
+    parser.add_argument(
+        "--snapshots",
+        required=True,
+        nargs="+",
+        type=Path,
+        help="One or more CSV, JSON list, or JSONL snapshot files.",
+    )
     args = parser.parse_args()
 
-    snapshots = load_market_snapshots(args.snapshots)
-    result = run_scalp_replay(args.command, snapshots)
+    if len(args.snapshots) == 1:
+        result = run_scalp_replay(args.command, load_market_snapshots(args.snapshots[0]))
+    else:
+        result = run_scalp_replay_batch(args.command, args.snapshots)
     print(json.dumps(result, indent=2, sort_keys=True))
 
 

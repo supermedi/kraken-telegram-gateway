@@ -5,7 +5,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 from kraken_telegram_gateway.gateway.models import ScalpSession, ScalpSessionStatus, ScalpSignal, ScalpTrade, ScalpTradeStatus
 from kraken_telegram_gateway.gateway.scalping import MarketSnapshot
-from kraken_telegram_gateway.gateway.scalp_replay import load_market_snapshots, run_scalp_replay
+from kraken_telegram_gateway.gateway.scalp_replay import load_market_snapshots, run_scalp_replay, run_scalp_replay_batch
 from kraken_telegram_gateway.gateway.service import (
     run_active_scalp_paper_sessions,
     run_scalp_paper_snapshots,
@@ -217,3 +217,60 @@ def test_scalp_replay_loads_csv_snapshots(tmp_path):
     assert len(snapshots) == 1
     assert snapshots[0].bid == 10
     assert snapshots[0].volume_ratio == 1.6
+
+
+def test_scalp_replay_batch_summarizes_multiple_snapshot_files(tmp_path):
+    profitable_path = tmp_path / "profitable.jsonl"
+    profitable_path.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "timestamp": "2026-08-17T13:45:00Z",
+                        "bid": 10,
+                        "ask": 10.01,
+                        "bid_size": 700,
+                        "ask_size": 300,
+                        "volume_ratio": 1.6,
+                    }
+                ),
+                json.dumps(
+                    {
+                        "timestamp": "2026-08-17T13:46:30Z",
+                        "bid": 10.08,
+                        "ask": 10.09,
+                        "bid_size": 500,
+                        "ask_size": 500,
+                        "volume_ratio": 1.0,
+                    }
+                ),
+            ]
+        ),
+        encoding="utf-8",
+    )
+    losing_path = tmp_path / "losing.csv"
+    losing_path.write_text(
+        "\n".join(
+            [
+                "timestamp,bid,ask,bid_size,ask_size,volume_ratio",
+                "2026-08-17T13:45:00Z,10,10.01,700,300,1.6",
+                "2026-08-17T13:46:30Z,9.92,9.93,500,500,1.0",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    result = run_scalp_replay_batch(
+        "/scalp_start pair=PF_LINKUSD amount_usdc=100 leverage=2 duration=60m max_hold=5m max_losses=1 min_pnl=1",
+        [profitable_path, losing_path],
+    )
+
+    assert [run["source"] for run in result["runs"]] == [str(profitable_path), str(losing_path)]
+    assert result["summary"]["replays"] == 2
+    assert result["summary"]["closed_trades"] == 2
+    assert result["summary"]["wins"] == 1
+    assert result["summary"]["losses"] == 1
+    assert result["summary"]["win_rate"] == 50
+    assert result["summary"]["close_reasons"] == {"min_net_pnl": 1, "max_loss_per_trade": 1}
+    assert result["summary"]["stop_reasons"] == {"max_losses": 1}
+    assert result["summary"]["avg_net_pnl_per_replay"] == result["summary"]["net_pnl"] / 2

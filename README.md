@@ -142,10 +142,10 @@ Replay offline d'une session scalp paper depuis des snapshots deterministes JSON
 ```bash
 kraken-scalp-replay \
   --command "/scalp_start pair=PF_LINKUSD amount_usdc=100 leverage=2 duration=60m max_hold=5m min_pnl=1" \
-  --snapshots ./snapshots.json
+  --snapshots ./snapshots-day-1.json ./snapshots-day-2.csv
 ```
 
-Colonnes/champs attendus: `timestamp`, `bid`, `ask`, `bid_size`, `ask_size`, et `volume_ratio` optionnel. La commande utilise une base SQLite en memoire, ne contacte pas Kraken et n'envoie aucun ordre.
+Colonnes/champs attendus: `timestamp`, `bid`, `ask`, `bid_size`, `ask_size`, et `volume_ratio` optionnel. Avec un seul fichier, la commande emet le rapport de session comme avant; avec plusieurs fichiers, elle emet `runs` plus une synthese multi-replay: replays, trades fermes/ouverts, wins/losses, winrate, PnL brut/net, frais estimes, pire drawdown par replay, signaux rejetes, raisons de cloture et raisons d'arret. La commande utilise une base SQLite en memoire, ne contacte pas Kraken et n'envoie aucun ordre.
 
 ## Exemple
 
