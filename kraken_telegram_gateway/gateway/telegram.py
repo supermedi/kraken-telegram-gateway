@@ -171,7 +171,7 @@ def dispatch_telegram_text(text: str, session: Session, settings: Settings) -> s
             return format_account_balances(balances)
 
         if command == "/scalp_start":
-            result = start_scalp_session(text, session)
+            result = start_scalp_session(text, session, settings)
             if result.session_id:
                 detail = get_scalp_session_detail(result.session_id, session)
                 if detail is not None:
@@ -199,7 +199,7 @@ def dispatch_telegram_text(text: str, session: Session, settings: Settings) -> s
 
         if command in {"/scalp_tick_kraken", "/scalp-tick-kraken"}:
             options = _parse_scalp_tick_kraken_options(argument)
-            result = run_active_scalp_paper_sessions_from_kraken(session, **options)
+            result = run_active_scalp_paper_sessions_from_kraken(session, **options, settings=settings)
             return format_scalp_scheduler_result(result)
 
         if command == "/pause":
@@ -243,7 +243,7 @@ def format_trade_action_commands(trade_id: str) -> str:
 
 def format_scalp_scheduler_result(result) -> str:
     lines = [
-        "Tick Kraken scalp paper termine.",
+        "Tick Kraken scalp termine.",
         f"Sessions scannees: {result.scanned}",
         f"Traitees: {result.processed}",
         f"Ignorees: {result.skipped}",

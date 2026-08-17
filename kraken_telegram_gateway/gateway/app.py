@@ -80,7 +80,7 @@ async def run_scalp_kraken_scheduler_loop(settings: Settings, *, max_ticks: int 
         try:
             await asyncio.to_thread(_run_scalp_kraken_scheduler_once, settings)
         except Exception:
-            logger.exception("Scalp Kraken paper scheduler tick failed.")
+            logger.exception("Scalp Kraken scheduler tick failed.")
         ticks += 1
 
 
@@ -90,6 +90,7 @@ def _run_scalp_kraken_scheduler_once(settings: Settings) -> ScalpSchedulerResult
             session,
             snapshots_per_session=settings.scalp_kraken_scheduler_snapshots_per_session,
             timeout_seconds=settings.scalp_kraken_scheduler_timeout_seconds,
+            settings=settings,
         )
 
 
@@ -121,9 +122,10 @@ def get_balance(
 def scalp_start_command(
     request: ScalpStartRequest,
     session: Session = Depends(get_session),
+    settings: Settings = Depends(get_settings),
 ) -> ScalpSessionResult:
     try:
-        return start_scalp_session(request.text, session)
+        return start_scalp_session(request.text, session, settings)
     except (CommandParseError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -159,11 +161,13 @@ def scalp_scheduler_kraken_tick(
     snapshots_per_session: int = Query(default=1, ge=1, le=10),
     timeout_seconds: float = Query(default=10, ge=1, le=60),
     session: Session = Depends(get_session),
+    settings: Settings = Depends(get_settings),
 ) -> ScalpSchedulerResult:
     return run_active_scalp_paper_sessions_from_kraken(
         session,
         snapshots_per_session=snapshots_per_session,
         timeout_seconds=timeout_seconds,
+        settings=settings,
     )
 
 

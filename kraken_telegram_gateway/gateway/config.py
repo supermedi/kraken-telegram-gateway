@@ -15,6 +15,8 @@ class Settings(BaseSettings):
     max_leverage: int = 2
     require_stop_loss_for_confirmation: bool = False
     allowed_pairs: str = "PF_XBTUSD,PF_ETHUSD"
+    scalp_live_enabled: bool = False
+    scalp_live_max_amount_usdc: float = 25
     telegram_bot_token: str | None = None
     telegram_webhook_secret: str | None = None
     telegram_allowed_user_ids: str = ""

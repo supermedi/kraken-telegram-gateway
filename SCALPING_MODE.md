@@ -12,6 +12,7 @@ Initial Telegram command:
 
 ```text
 /scalp_start pair=PF_LINKUSD side=both amount_usdc=100 leverage=2 duration=60m max_hold=5m max_losses=3 min_net_pnl=5 mode=paper
+/scalp_start pair=PF_LINKUSD side=buy amount_usdc=10 leverage=1 duration=15m max_hold=2m max_losses=1 min_net_pnl=1 mode=live
 ```
 
 Companion commands:
@@ -23,7 +24,7 @@ Companion commands:
 /scalp_tick_kraken snapshots=2 timeout=10
 ```
 
-The first implementation must be paper-only. Live execution can be added later behind the existing live gates plus a dedicated scalping gate.
+Paper remains the default. Live execution is experimental and requires the existing live gates plus a dedicated scalping gate.
 
 ## Parameters
 
@@ -35,7 +36,7 @@ The first implementation must be paper-only. Live execution can be added later b
 - `max_hold`: maximum time a trade may stay open. This can be seconds or minutes; default candidate: `5m`.
 - `max_losses`: automatic stop after this many losing closed trades. User target: `3`.
 - `min_net_pnl`: desired minimum net profit or loss threshold per closed trade in USD. User target: `5`.
-- `mode`: `paper` initially. `live` must be rejected until the live scalping gate exists.
+- `mode`: `paper` by default, or `live` only when `SCALP_LIVE_ENABLED=true`, `LIVE_TRADING_ENABLED=true`, `DRY_RUN=false`, credentials are present, and the amount stays below `SCALP_LIVE_MAX_AMOUNT_USDC`.
 
 ## Session Rules
 
@@ -75,6 +76,8 @@ The signal should produce a score and a reason string. Paper reports must show b
 6. Close paper trade and compute net PnL after estimated maker/taker fees.
 7. Increment loss counter only after net PnL is negative.
 8. Stop the session if `max_losses`, `duration`, or manual stop is reached.
+
+Live V1 uses the same signal, but submits only the entry limit order. It stores the returned Kraken order id on the scalp trade. Automatic live exits, fill tracking, and reduce-only close orders are intentionally left for a later account-event/fill-tracking phase.
 
 ## Data Model Proposal
 
@@ -117,11 +120,11 @@ Final report should include:
 Implemented:
 
 - Persistent `ScalpSession`, `ScalpTrade`, and `ScalpSignal` tables.
-- `/scalp_start` parser with `duration=60m`, `max_hold=5m`, `max_losses=3`, `min_pnl=5`, `amount`/`amount_usdc`, and `mode=paper`.
+- `/scalp_start` parser with `duration=60m`, `max_hold=5m`, `max_losses=3`, `min_pnl=5`, `amount`/`amount_usdc`, `mode=paper`, and gated `mode=live`.
 - Telegram commands `/scalp_start`, `/scalp_status`, `/scalp_stop`, and `/scalp_report`.
-- Telegram command `/scalp_tick_kraken` to run a manual Kraken public WebSocket paper tick.
+- Telegram command `/scalp_tick_kraken` to run a manual Kraken public WebSocket tick.
 - API endpoints `POST /commands/scalp-start`, `GET /scalp/{session_id}`, `GET /scalp/{session_id}/report`, and `POST /commands/scalp-stop/{session_id}`.
-- Paper-only enforcement: `mode=live` is rejected.
+- Live enforcement: `mode=live` is rejected unless `SCALP_LIVE_ENABLED=true`, the existing Kraken live gates are open, the pair is allowed, and the amount is within `SCALP_LIVE_MAX_AMOUNT_USDC`.
 - Compact status/report formatting with winrate, gross/net PnL, estimated fees, max drawdown, rejected signals, close reasons, and stop reason from persisted paper data.
 - Synthetic market-data adapter and paper runner for deterministic tests.
 - V1 signal evaluation from spread, top-of-book imbalance, and local volume ratio.
@@ -130,11 +133,13 @@ Implemented:
 - Kraken Futures public WebSocket adapter for book/ticker_lite snapshots feeding paper sessions.
 - Opt-in FastAPI background loop for active paper sessions via `SCALP_KRAKEN_SCHEDULER_ENABLED=true`.
 - Offline deterministic replay CLI `kraken-scalp-replay` for one or more JSON, JSONL, or CSV snapshot files, including common historical-book field aliases such as `best_bid`, `best_ask`, `bid_qty`, `ask_qty`, and `volumeRatio`, plus raw public Kraken Futures WebSocket `book_snapshot`, `book`, and `ticker_lite` JSON/JSONL messages. It runs paper sessions in an in-memory SQLite database and emits either a single-session JSON report or a multi-replay summary without contacting Kraken.
+- Experimental live entry submission for `mode=live` sessions: a passing signal submits one Kraken Futures limit entry order and records the external order id.
 
 Not implemented yet:
 
 - Richer exchange/download-specific historical-data adapters.
-- Live order submission.
+- Automatic live exit orders.
+- Real fill/account-event tracking.
 
 ## Implementation Phases
 
@@ -148,7 +153,8 @@ Not implemented yet:
 8. Done: add multi-file replay summaries for comparing paper validation runs.
 9. Done: accept common historical book export aliases in replay inputs.
 10. Done: accept raw public Kraken Futures WebSocket book/ticker messages in replay inputs.
-11. Only after repeated paper validation, add a separate `SCALPING_LIVE_ENABLED=true` gate for live orders.
+11. Done: add a separate `SCALP_LIVE_ENABLED=true` gate for live entry orders.
+12. Add Kraken account-event polling/webhook tracking before any automatic live exits.
 
 ## Safety Notes
 

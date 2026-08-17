@@ -31,6 +31,7 @@ from kraken_telegram_gateway.gateway.schemas import (
     AuditEventTypeList,
     AuditEventTypeSummary,
     ConfirmResult,
+    ScalpIntent,
     ScalpSchedulerResult,
     ScalpSessionDetail,
     ScalpSessionReport,
@@ -67,15 +68,18 @@ def create_trade_preview(text: str, session: Session, settings: Settings) -> Tra
     return TradePreview(trade_id=trade.id, summary=format_trade_summary(trade), warning=warning, dry_run=trade.dry_run)
 
 
-def start_scalp_session(text: str, session: Session) -> ScalpSessionResult:
+def start_scalp_session(text: str, session: Session, settings: Settings | None = None) -> ScalpSessionResult:
     if is_trading_paused(session):
         return ScalpSessionResult(session_id="", status="paused", message="Trading en pause.")
 
     intent = parse_scalp_start_command(text)
+    if settings is not None:
+        _validate_scalp_intent(intent, settings)
+    active_status = ScalpSessionStatus.LIVE_ACTIVE if intent.mode == "live" else ScalpSessionStatus.PAPER_ACTIVE
     active = session.exec(
         select(ScalpSession).where(
             ScalpSession.pair == intent.pair,
-            ScalpSession.status == ScalpSessionStatus.PAPER_ACTIVE,
+            ScalpSession.status == active_status,
         )
     ).first()
     if active is not None:
@@ -95,6 +99,7 @@ def start_scalp_session(text: str, session: Session) -> ScalpSessionResult:
         max_losses=intent.max_losses,
         min_net_pnl=intent.min_net_pnl,
         mode=intent.mode,
+        status=active_status,
     )
     session.add(scalp_session)
     session.commit()
@@ -103,16 +108,23 @@ def start_scalp_session(text: str, session: Session) -> ScalpSessionResult:
         AuditEvent(
             event_type="scalp_session_started",
             message=(
-                f"Scalp paper session {scalp_session.id} started for {scalp_session.pair}; "
+                f"Scalp {scalp_session.mode} session {scalp_session.id} started for {scalp_session.pair}; "
                 f"duration={scalp_session.duration_seconds}s max_hold={scalp_session.max_hold_seconds}s."
             ),
         )
     )
     session.commit()
+    if scalp_session.mode == "live":
+        message = (
+            "Session scalp live creee. Les signaux peuvent envoyer des ordres limit Kraken "
+            "si le scheduler/tick market-data tourne."
+        )
+    else:
+        message = "Session scalp paper creee. Aucun ordre Kraken ne sera envoye."
     return ScalpSessionResult(
         session_id=scalp_session.id,
         status=scalp_session.status,
-        message="Session scalp paper creee. Aucun ordre Kraken ne sera envoye.",
+        message=message,
     )
 
 
@@ -120,7 +132,7 @@ def stop_scalp_session(session_id: str, session: Session, *, reason: str = "manu
     scalp_session = session.get(ScalpSession, session_id)
     if scalp_session is None:
         return ScalpSessionResult(session_id=session_id, status="not_found", message="Session scalp introuvable.")
-    if scalp_session.status != ScalpSessionStatus.PAPER_ACTIVE:
+    if not _is_active_scalp_status(scalp_session.status):
         return ScalpSessionResult(
             session_id=scalp_session.id,
             status=scalp_session.status,
@@ -135,14 +147,14 @@ def stop_scalp_session(session_id: str, session: Session, *, reason: str = "manu
     session.add(
         AuditEvent(
             event_type="scalp_session_stopped",
-            message=f"Scalp paper session {scalp_session.id} stopped: {reason}.",
+            message=f"Scalp {scalp_session.mode} session {scalp_session.id} stopped: {reason}.",
         )
     )
     session.commit()
     return ScalpSessionResult(
         session_id=scalp_session.id,
         status=scalp_session.status,
-        message="Session scalp arretee. Aucun ordre Kraken envoye.",
+        message="Session scalp arretee.",
     )
 
 
@@ -251,16 +263,116 @@ def run_scalp_paper_snapshots(
     )
 
 
+def run_scalp_live_snapshots(
+    session_id: str,
+    snapshots: list[MarketSnapshot],
+    session: Session,
+    settings: Settings,
+) -> ScalpSessionResult:
+    scalp_session = session.get(ScalpSession, session_id)
+    if scalp_session is None:
+        return ScalpSessionResult(session_id=session_id, status="not_found", message="Session scalp introuvable.")
+    if scalp_session.status != ScalpSessionStatus.LIVE_ACTIVE:
+        return ScalpSessionResult(
+            session_id=scalp_session.id,
+            status=scalp_session.status,
+            message="Session scalp live inactive; aucun snapshot traite.",
+        )
+    if not snapshots:
+        return ScalpSessionResult(
+            session_id=scalp_session.id,
+            status=scalp_session.status,
+            message="Aucun snapshot market-data a traiter.",
+        )
+
+    if not settings.scalp_live_enabled:
+        return _block_live_scalp_session(scalp_session, "SCALP_LIVE_ENABLED=false.", session)
+    if not settings.can_live_trade:
+        return _block_live_scalp_session(
+            scalp_session,
+            "Kraken live gates fermes: LIVE_TRADING_ENABLED=true, DRY_RUN=false et credentials requis.",
+            session,
+        )
+    if scalp_session.amount_usdc > settings.scalp_live_max_amount_usdc:
+        return _block_live_scalp_session(
+            scalp_session,
+            f"Montant scalp live {scalp_session.amount_usdc:g} > limite {settings.scalp_live_max_amount_usdc:g} USDC.",
+            session,
+        )
+
+    submitted = 0
+    blocked = 0
+    client = KrakenClient(settings)
+    for snapshot in sorted(snapshots, key=lambda item: item.timestamp):
+        if _scalp_session_elapsed(scalp_session, snapshot):
+            _complete_scalp_session(scalp_session, "duration_elapsed", session)
+            break
+        if _get_open_scalp_trade(scalp_session.id, session) is not None:
+            continue
+
+        decision = evaluate_scalp_signal(snapshot, side_mode=scalp_session.side_mode)
+        signal = ScalpSignal(
+            session_id=scalp_session.id,
+            signal_kind="book_volume_v1",
+            score=decision.score,
+            spread=snapshot.spread,
+            book_imbalance=snapshot.book_imbalance,
+            volume_ratio=snapshot.volume_ratio,
+            reason=decision.reason,
+            created_at=snapshot.timestamp,
+        )
+        session.add(signal)
+        if decision.side is None:
+            continue
+
+        entry_price = snapshot.ask if decision.side == "buy" else snapshot.bid
+        result = client.submit_scalp_entry_order(scalp_session, decision.side, entry_price)
+        scalp_trade = ScalpTrade(
+            session_id=scalp_session.id,
+            pair=scalp_session.pair,
+            side=decision.side,
+            amount_usdc=scalp_session.amount_usdc,
+            leverage=scalp_session.leverage,
+            entry_price=entry_price,
+            status=ScalpTradeStatus.LIVE_SUBMITTED if result["mode"] == "live" else ScalpTradeStatus.LIVE_BLOCKED,
+            external_order_id=result.get("external_order_id"),
+            close_reason=None if result["mode"] == "live" else result["message"],
+            opened_at=snapshot.timestamp,
+            created_at=snapshot.timestamp,
+            updated_at=snapshot.timestamp,
+        )
+        session.add(scalp_trade)
+        session.flush()
+        signal.scalp_trade_id = scalp_trade.id
+        session.add(signal)
+        event_type = "scalp_live_entry_submitted" if result["mode"] == "live" else "scalp_live_entry_blocked"
+        session.add(AuditEvent(event_type=event_type, message=result["message"]))
+        if result["mode"] == "live":
+            submitted += 1
+        else:
+            blocked += 1
+
+    scalp_session.updated_at = utc_now()
+    session.add(scalp_session)
+    session.commit()
+    return ScalpSessionResult(
+        session_id=scalp_session.id,
+        status=scalp_session.status,
+        message=f"Live runner: {submitted} ordre(s) envoyes, {blocked} ordre(s) bloques.",
+    )
+
+
 ScalpSnapshotProvider = Callable[[ScalpSession], list[MarketSnapshot]]
 
 
 def run_active_scalp_paper_sessions(
     session: Session,
     snapshot_provider: ScalpSnapshotProvider,
+    settings: Settings | None = None,
 ) -> ScalpSchedulerResult:
     active_sessions = session.exec(
         select(ScalpSession)
-        .where(ScalpSession.status == ScalpSessionStatus.PAPER_ACTIVE)
+        .where(ScalpSession.status.in_([ScalpSessionStatus.PAPER_ACTIVE, ScalpSessionStatus.LIVE_ACTIVE]))
         .order_by(ScalpSession.started_at.asc(), ScalpSession.id.asc())
     ).all()
 
@@ -273,7 +385,14 @@ def run_active_scalp_paper_sessions(
             skipped += 1
             messages.append(f"{scalp_session.id}: aucun snapshot disponible.")
             continue
-        result = run_scalp_paper_snapshots(scalp_session.id, snapshots, session)
+        if scalp_session.mode == "live":
+            if settings is None:
+                skipped += 1
+                messages.append(f"{scalp_session.id}: settings live manquants.")
+                continue
+            result = run_scalp_live_snapshots(scalp_session.id, snapshots, session, settings)
+        else:
+            result = run_scalp_paper_snapshots(scalp_session.id, snapshots, session)
         processed += 1
         messages.append(f"{scalp_session.id}: {result.message}")
 
@@ -290,6 +409,7 @@ def run_active_scalp_paper_sessions_from_kraken(
     *,
     snapshots_per_session: int = 1,
     timeout_seconds: float = 10,
+    settings: Settings | None = None,
 ) -> ScalpSchedulerResult:
     def snapshot_provider(scalp_session: ScalpSession) -> list[MarketSnapshot]:
         return asyncio_run_collect_snapshots(
@@ -298,7 +418,7 @@ def run_active_scalp_paper_sessions_from_kraken(
             timeout_seconds=timeout_seconds,
         )
 
-    return run_active_scalp_paper_sessions(session, snapshot_provider)
+    return run_active_scalp_paper_sessions(session, snapshot_provider, settings=settings)
 
 
 def asyncio_run_collect_snapshots(product_id: str, *, limit: int, timeout_seconds: float) -> list[MarketSnapshot]:
@@ -787,7 +907,7 @@ def format_scalp_report(detail: ScalpSessionDetail) -> str:
     if detail.session.stop_reason:
         lines.append(f"Raison d'arret: {detail.session.stop_reason}")
     if report.closed_trades == 0:
-        lines.append("Aucun trade paper ferme pour l'instant; le runner market-data n'est pas encore branche.")
+        lines.append("Aucun trade ferme pour l'instant.")
     return "\n".join(lines)
 
 
@@ -819,7 +939,7 @@ def build_scalp_session_report(detail: ScalpSessionDetail) -> ScalpSessionReport
 
 def compute_scalp_metrics(trades: list[ScalpTrade]) -> dict[str, float | int]:
     closed = [trade for trade in trades if trade.status == ScalpTradeStatus.PAPER_CLOSED]
-    open_trades = [trade for trade in trades if trade.status == ScalpTradeStatus.PAPER_OPEN]
+    open_trades = [trade for trade in trades if trade.status in {ScalpTradeStatus.PAPER_OPEN, ScalpTradeStatus.LIVE_SUBMITTED}]
     pnl_values = [trade.net_pnl or 0 for trade in closed]
     wins = [value for value in pnl_values if value > 0]
     losses = [value for value in pnl_values if value < 0]
@@ -873,9 +993,52 @@ def _get_open_scalp_trade(session_id: str, session: Session) -> ScalpTrade | Non
     return session.exec(
         select(ScalpTrade).where(
             ScalpTrade.session_id == session_id,
-            ScalpTrade.status == ScalpTradeStatus.PAPER_OPEN,
+            ScalpTrade.status.in_([ScalpTradeStatus.PAPER_OPEN, ScalpTradeStatus.LIVE_SUBMITTED]),
         )
     ).first()
+
+
+def _is_active_scalp_status(status: ScalpSessionStatus) -> bool:
+    return status in {ScalpSessionStatus.PAPER_ACTIVE, ScalpSessionStatus.LIVE_ACTIVE}
+
+
+def _validate_scalp_intent(intent: ScalpIntent, settings: Settings) -> None:
+    if intent.mode != "live":
+        return
+    if not settings.scalp_live_enabled:
+        raise ValueError("mode=live requires SCALP_LIVE_ENABLED=true")
+    if not settings.can_live_trade:
+        raise ValueError("mode=live requires LIVE_TRADING_ENABLED=true, DRY_RUN=false and Kraken credentials")
+    if not settings.allows_all_pairs and intent.pair not in settings.allowed_pair_set:
+        raise ValueError(f"pair not allowed: {intent.pair}")
+    if intent.amount_usdc > settings.max_amount_usdc:
+        raise ValueError(f"amount_usdc exceeds max_amount_usdc={settings.max_amount_usdc:g}")
+    if intent.amount_usdc > settings.scalp_live_max_amount_usdc:
+        raise ValueError(
+            f"amount_usdc exceeds scalp_live_max_amount_usdc={settings.scalp_live_max_amount_usdc:g}"
+        )
+    if intent.leverage > settings.max_leverage:
+        raise ValueError(f"leverage exceeds max_leverage={settings.max_leverage}")
+
+
+def _block_live_scalp_session(scalp_session: ScalpSession, reason: str, session: Session) -> ScalpSessionResult:
+    scalp_session.status = ScalpSessionStatus.STOPPED
+    scalp_session.stop_reason = "live_blocked"
+    scalp_session.stopped_at = utc_now()
+    scalp_session.updated_at = utc_now()
+    session.add(scalp_session)
+    session.add(
+        AuditEvent(
+            event_type="scalp_live_blocked",
+            message=f"Scalp live session {scalp_session.id} blocked: {reason}",
+        )
+    )
+    session.commit()
+    return ScalpSessionResult(
+        session_id=scalp_session.id,
+        status=scalp_session.status,
+        message=f"Scalp live bloque: {reason}",
+    )
 
 
 def _maybe_close_scalp_trade(

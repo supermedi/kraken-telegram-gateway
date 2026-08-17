@@ -89,7 +89,7 @@ def test_scalp_start_creates_paper_session_with_multi_minute_hold():
     assert scalp_session.status == ScalpSessionStatus.PAPER_ACTIVE
 
 
-def test_scalp_start_rejects_live_mode_for_v1():
+def test_scalp_start_rejects_live_mode_without_live_flag():
     with make_session() as session:
         reply = dispatch_telegram_text(
             "/scalp_start pair=PF_LINKUSD amount_usdc=100 mode=live",
@@ -98,7 +98,32 @@ def test_scalp_start_rejects_live_mode_for_v1():
         )
 
     assert "Commande refusee" in reply
-    assert "only supports mode=paper" in reply
+    assert "SCALP_LIVE_ENABLED=true" in reply
+
+
+def test_scalp_start_creates_live_session_when_all_gates_are_open():
+    settings = Settings(
+        max_amount_usdc=100,
+        scalp_live_max_amount_usdc=25,
+        scalp_live_enabled=True,
+        dry_run=False,
+        live_trading_enabled=True,
+        kraken_api_key="public-key",
+        kraken_api_secret="dGVzdC1zZWNyZXQ=",
+        allowed_pairs="PF_LINKUSD",
+    )
+    with make_session() as session:
+        reply = dispatch_telegram_text(
+            "/scalp_start pair=PF_LINKUSD amount_usdc=10 mode=live side=buy duration=60m max_hold=5m",
+            session,
+            settings,
+        )
+        scalp_session = session.exec(select(ScalpSession)).one()
+
+    assert "Session scalp live creee" in reply
+    assert "Mode: live" in reply
+    assert scalp_session.mode == "live"
+    assert scalp_session.status == ScalpSessionStatus.LIVE_ACTIVE
 
 
 def test_scalp_status_stop_and_report_use_paper_metrics():
@@ -189,12 +214,13 @@ def test_scalp_status_stop_and_report_use_paper_metrics():
 def test_scalp_tick_kraken_runs_scheduler_from_telegram(monkeypatch):
     calls = []
 
-    def fake_run_active_scalp_paper_sessions_from_kraken(session, *, snapshots_per_session, timeout_seconds):
+    def fake_run_active_scalp_paper_sessions_from_kraken(session, *, snapshots_per_session, timeout_seconds, settings):
         calls.append(
             {
                 "session": session,
                 "snapshots_per_session": snapshots_per_session,
                 "timeout_seconds": timeout_seconds,
+                "settings": settings,
             }
         )
         return ScalpSchedulerResult(
@@ -218,7 +244,8 @@ def test_scalp_tick_kraken_runs_scheduler_from_telegram(monkeypatch):
 
     assert calls[0]["snapshots_per_session"] == 2
     assert calls[0]["timeout_seconds"] == 3
-    assert "Tick Kraken scalp paper termine" in reply
+    assert calls[0]["settings"].max_amount_usdc == 100
+    assert "Tick Kraken scalp termine" in reply
     assert "Sessions scannees: 1" in reply
     assert "Traitees: 1" in reply
     assert "- scalp-1: Session scalp traitee." in reply

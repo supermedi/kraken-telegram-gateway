@@ -16,6 +16,7 @@ class TradeStatus(StrEnum):
 
 class ScalpSessionStatus(StrEnum):
     PAPER_ACTIVE = "paper_active"
+    LIVE_ACTIVE = "live_active"
     STOPPED = "stopped"
     COMPLETED = "completed"
 
@@ -23,6 +24,8 @@ class ScalpSessionStatus(StrEnum):
 class ScalpTradeStatus(StrEnum):
     PAPER_OPEN = "paper_open"
     PAPER_CLOSED = "paper_closed"
+    LIVE_SUBMITTED = "live_submitted"
+    LIVE_BLOCKED = "live_blocked"
 
 
 class OrderRole(StrEnum):
@@ -92,6 +95,7 @@ class ScalpTrade(SQLModel, table=True):
     estimated_fees: float | None = None
     net_pnl: float | None = None
     status: ScalpTradeStatus = ScalpTradeStatus.PAPER_OPEN
+    external_order_id: str | None = None
     close_reason: str | None = None
     opened_at: datetime = Field(default_factory=utc_now)
     closed_at: datetime | None = None

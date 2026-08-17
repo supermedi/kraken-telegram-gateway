@@ -58,6 +58,8 @@ TELEGRAM_WEBHOOK_SECRET=your_long_random_secret
 TELEGRAM_ALLOWED_USER_IDS=1544791425
 KRAKEN_API_KEY=
 KRAKEN_API_SECRET=
+SCALP_LIVE_ENABLED=false
+SCALP_LIVE_MAX_AMOUNT_USDC=25
 SCALP_KRAKEN_SCHEDULER_ENABLED=false
 SCALP_KRAKEN_SCHEDULER_INTERVAL_SECONDS=60
 SCALP_KRAKEN_SCHEDULER_SNAPSHOTS_PER_SESSION=1
@@ -66,7 +68,7 @@ HOST_PORT=8010
 IMAGE_NAME=ghcr.io/supermedi/kraken-telegram-gateway:latest
 ```
 
-`SCALP_KRAKEN_SCHEDULER_ENABLED=true` lance uniquement la boucle automatique de scalping paper depuis les snapshots publics Kraken Futures. Garder `DRY_RUN=true` et `LIVE_TRADING_ENABLED=false`; cette boucle ne doit pas etre utilisee comme validation de trading live.
+`SCALP_KRAKEN_SCHEDULER_ENABLED=true` lance la boucle automatique de scalping depuis les snapshots publics Kraken Futures. Elle reste paper tant que les sessions sont en `mode=paper`. Les sessions `mode=live` exigent en plus `SCALP_LIVE_ENABLED=true`, `DRY_RUN=false`, `LIVE_TRADING_ENABLED=true`, des cles Kraken Futures valides, et un montant sous `SCALP_LIVE_MAX_AMOUNT_USDC`.
 
 Start:
 

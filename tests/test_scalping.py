@@ -3,6 +3,7 @@ import json
 
 from sqlmodel import Session, SQLModel, create_engine, select
 
+from kraken_telegram_gateway.gateway.config import Settings
 from kraken_telegram_gateway.gateway.models import ScalpSession, ScalpSessionStatus, ScalpSignal, ScalpTrade, ScalpTradeStatus
 from kraken_telegram_gateway.gateway.scalping import MarketSnapshot
 from kraken_telegram_gateway.gateway.scalp_replay import (
@@ -13,6 +14,7 @@ from kraken_telegram_gateway.gateway.scalp_replay import (
 )
 from kraken_telegram_gateway.gateway.service import (
     run_active_scalp_paper_sessions,
+    run_scalp_live_snapshots,
     run_scalp_paper_snapshots,
     start_scalp_session,
 )
@@ -165,6 +167,67 @@ def test_scalp_scheduler_skips_active_session_without_snapshots():
     assert scheduler_result.skipped == 1
     assert result.session_id in scheduler_result.messages[0]
     assert trades == []
+
+
+def test_scalp_live_runner_submits_entry_order_when_signal_passes(monkeypatch):
+    calls = []
+
+    def fake_submit_scalp_entry_order(self, scalp_session, side, price):
+        calls.append((scalp_session.id, side, price))
+        return {
+            "mode": "live",
+            "external_order_id": "OID-SCALP-1",
+            "message": "Live Kraken scalp entry order submitted.",
+        }
+
+    monkeypatch.setattr(
+        "kraken_telegram_gateway.gateway.kraken.KrakenClient.submit_scalp_entry_order",
+        fake_submit_scalp_entry_order,
+    )
+    settings = Settings(
+        scalp_live_enabled=True,
+        scalp_live_max_amount_usdc=25,
+        dry_run=False,
+        live_trading_enabled=True,
+        kraken_api_key="public-key",
+        kraken_api_secret="dGVzdC1zZWNyZXQ=",
+        allowed_pairs="PF_LINKUSD",
+    )
+    with make_session() as session:
+        result = start_scalp_session(
+            "/scalp_start pair=PF_LINKUSD amount_usdc=10 leverage=1 mode=live side=buy duration=60m max_hold=5m",
+            session,
+            settings,
+        )
+        scalp_session = session.get(ScalpSession, result.session_id)
+        assert scalp_session is not None
+        start = scalp_session.started_at
+
+        run_result = run_scalp_live_snapshots(
+            result.session_id,
+            [
+                MarketSnapshot(
+                    start + timedelta(seconds=1),
+                    bid=10,
+                    ask=10.01,
+                    bid_size=700,
+                    ask_size=300,
+                    volume_ratio=1.6,
+                )
+            ],
+            session,
+            settings,
+        )
+        trades = session.exec(select(ScalpTrade)).all()
+        signals = session.exec(select(ScalpSignal)).all()
+
+    assert run_result.status == ScalpSessionStatus.LIVE_ACTIVE
+    assert run_result.message == "Live runner: 1 ordre(s) envoyes, 0 ordre(s) bloques."
+    assert calls == [(result.session_id, "buy", 10.01)]
+    assert len(trades) == 1
+    assert trades[0].status == ScalpTradeStatus.LIVE_SUBMITTED
+    assert trades[0].external_order_id == "OID-SCALP-1"
+    assert signals[0].scalp_trade_id == trades[0].id
 
 
 def test_scalp_replay_runs_offline_report_from_json_snapshots(tmp_path):

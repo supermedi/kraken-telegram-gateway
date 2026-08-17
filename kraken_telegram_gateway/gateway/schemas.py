@@ -81,8 +81,8 @@ class ScalpIntent(BaseModel):
     @classmethod
     def validate_mode(cls, value: str) -> str:
         mode = value.lower()
-        if mode != "paper":
-            raise ValueError("scalping V1 only supports mode=paper")
+        if mode not in {"paper", "live"}:
+            raise ValueError("scalping mode must be paper or live")
         return mode
 
 

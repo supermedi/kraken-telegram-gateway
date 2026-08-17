@@ -126,11 +126,15 @@ Les filtres Telegram `status`, `role`, `event_type`, `type` et `event` acceptent
 `/audit_types` ou `/audit-types` affiche les types d'evenements d'audit disponibles avec leurs compteurs, pratique pour choisir un filtre `event_type`.
 `/balance` ou `/solde` interroge le endpoint Kraken Futures `/derivatives/api/v3/accounts` en lecture seule et affiche les soldes par compte/devise. Les lignes sans solde numerique ou avec uniquement des zeros sont masquees, pour garder seulement les comptes utiles comme `flex USDC`. Les filtres optionnels `account` et `currency` permettent de limiter la reponse, par exemple `/balance account=flex currency=USDC`. Les alias `asset=...` et `devise=...` sont aussi acceptes pour filtrer la devise plus vite depuis Telegram. Cette commande exige des cles API Futures (`KRAKEN_API_KEY` et `KRAKEN_API_SECRET`), pas des cles Spot, et reste disponible en dry-run. Si Kraken renvoie `authenticationError`, verifier aussi que `KRAKEN_FUTURES_BASE_URL` correspond au compte des cles (`https://futures.kraken.com` pour live, `https://demo-futures.kraken.com` pour demo).
 
-Un mode scalping experimental paper-only est initialise dans [SCALPING_MODE.md](SCALPING_MODE.md). `/scalp_start` cree une session durable sans envoyer d'ordre Kraken, accepte des trades qui pourront durer de quelques secondes a quelques minutes via `max_hold`, applique les parametres `duration`, `max_losses` et `min_pnl`, puis `/scalp_status`, `/scalp_stop` et `/scalp_report` permettent de piloter la session. Le rapport affiche winrate, PnL brut/net, frais estimes, drawdown max, signaux rejetes et raisons de cloture. `/scalp_tick_kraken` collecte des snapshots publics Kraken Futures WebSocket et fait avancer les sessions paper actives depuis Telegram; les options `snapshots=1..10` et `timeout=1..60` sont disponibles. Le meme scheduler est expose par `POST /scalp/scheduler/tick-kraken`. Une boucle background opt-in peut lancer ce tick automatiquement pour les sessions paper actives avec `SCALP_KRAKEN_SCHEDULER_ENABLED=true`; elle reste desactivee par defaut et n'ouvre aucun chemin d'ordre live.
+Un mode scalping experimental est initialise dans [SCALPING_MODE.md](SCALPING_MODE.md). Par defaut, `/scalp_start` cree une session paper durable sans envoyer d'ordre Kraken, accepte des trades qui pourront durer de quelques secondes a quelques minutes via `max_hold`, applique les parametres `duration`, `max_losses` et `min_pnl`, puis `/scalp_status`, `/scalp_stop` et `/scalp_report` permettent de piloter la session. Le rapport affiche winrate, PnL brut/net, frais estimes, drawdown max, signaux rejetes et raisons de cloture. `/scalp_tick_kraken` collecte des snapshots publics Kraken Futures WebSocket et fait avancer les sessions actives depuis Telegram; les options `snapshots=1..10` et `timeout=1..60` sont disponibles. Le meme scheduler est expose par `POST /scalp/scheduler/tick-kraken`. Une boucle background opt-in peut lancer ce tick automatiquement avec `SCALP_KRAKEN_SCHEDULER_ENABLED=true`; elle reste desactivee par defaut.
+
+Scalping live experimental: `mode=live` est accepte uniquement si `SCALP_LIVE_ENABLED=true`, `LIVE_TRADING_ENABLED=true`, `DRY_RUN=false`, les cles Kraken Futures sont presentes, la paire est autorisee, et le montant respecte `SCALP_LIVE_MAX_AMOUNT_USDC`. La V1 live soumet seulement un ordre limit d'entree quand un signal passe. Elle ne place pas encore d'ordre de sortie automatique et ne suit pas encore les fills Kraken; surveiller la position directement sur Kraken pendant les tests petit montant.
 
 Variables utiles pour la boucle scalp paper Kraken:
 
 ```dotenv
+SCALP_LIVE_ENABLED=false
+SCALP_LIVE_MAX_AMOUNT_USDC=25
 SCALP_KRAKEN_SCHEDULER_ENABLED=false
 SCALP_KRAKEN_SCHEDULER_INTERVAL_SECONDS=60
 SCALP_KRAKEN_SCHEDULER_SNAPSHOTS_PER_SESSION=1
@@ -179,6 +183,9 @@ curl "http://localhost:8000/balance?account=flex&currency=USDC"
 curl -X POST http://localhost:8000/commands/scalp-start \
   -H "content-type: application/json" \
   -d '{"text":"/scalp_start pair=PF_LINKUSD amount_usdc=100 duration=60m max_hold=5m max_losses=3 min_pnl=5"}'
+curl -X POST http://localhost:8000/commands/scalp-start \
+  -H "content-type: application/json" \
+  -d '{"text":"/scalp_start pair=PF_LINKUSD amount_usdc=10 mode=live side=buy duration=15m max_hold=2m max_losses=1 min_pnl=1"}'
 curl http://localhost:8000/scalp/<session_id>
 curl http://localhost:8000/scalp/<session_id>/report
 curl -X POST http://localhost:8000/scalp/scheduler/tick
@@ -190,4 +197,4 @@ curl -X POST http://localhost:8000/commands/scalp-stop/<session_id>
 `GET /audit` retourne les evenements d'audit les plus recents sous forme `{items,total,limit,offset}` avec filtres optionnels `trade_id` et `event_type`.
 `GET /audit/event-types` retourne les compteurs par type d'evenement d'audit sous forme `{items,total}` pour aider les vues operateur.
 `GET /balance` retourne les soldes Kraken Futures lus via `/derivatives/api/v3/accounts`, avec filtres optionnels `account` et `currency`; il exige les cles Kraken mais reste strictement read-only et disponible en dry-run.
-`POST /commands/scalp-start`, `GET /scalp/{session_id}`, `GET /scalp/{session_id}/report`, `POST /scalp/scheduler/tick`, `POST /scalp/scheduler/tick-kraken` et `POST /commands/scalp-stop/{session_id}` exposent le socle scalping paper-only cote API.
+`POST /commands/scalp-start`, `GET /scalp/{session_id}`, `GET /scalp/{session_id}/report`, `POST /scalp/scheduler/tick`, `POST /scalp/scheduler/tick-kraken` et `POST /commands/scalp-stop/{session_id}` exposent le socle scalping paper/live cote API. Le live reste bloque par defaut.

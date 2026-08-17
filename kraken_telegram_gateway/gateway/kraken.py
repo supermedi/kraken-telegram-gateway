@@ -12,7 +12,7 @@ from urllib.parse import urlencode
 import httpx
 
 from kraken_telegram_gateway.gateway.config import Settings
-from kraken_telegram_gateway.gateway.models import Trade, TradeOrder
+from kraken_telegram_gateway.gateway.models import ScalpSession, Trade, TradeOrder
 
 
 class KrakenLiveTradingDisabledError(RuntimeError):
@@ -231,6 +231,40 @@ class KrakenClient:
             "mode": "live",
             "external_order_id": external_order_id,
             "message": "Live Kraken target order submitted.",
+        }
+
+    def submit_scalp_entry_order(self, scalp_session: ScalpSession, side: str, price: float) -> dict[str, str]:
+        if not self.settings.can_live_trade:
+            return {
+                "mode": "blocked",
+                "message": "Live scalp blocked: Kraken live gates are not open.",
+            }
+
+        try:
+            payload = self._build_limit_order_payload(
+                symbol=scalp_session.pair,
+                side=side,
+                price=price,
+                amount_usdc=scalp_session.amount_usdc,
+                leverage=scalp_session.leverage,
+                reduce_only=False,
+                instrument=self.instrument_provider.get(scalp_session.pair),
+            )
+            external_order_id = self.submit_live_order(payload)
+        except KrakenOrderPayloadError as exc:
+            return {
+                "mode": "blocked",
+                "message": f"Live Kraken scalp submission blocked: {exc}",
+            }
+        except KrakenOrderSubmissionError as exc:
+            return {
+                "mode": "blocked",
+                "message": f"Live Kraken scalp submission failed: {exc}",
+            }
+        return {
+            "mode": "live",
+            "external_order_id": external_order_id,
+            "message": "Live Kraken scalp entry order submitted.",
         }
 
     def cancel_order(self, external_order_id: str) -> dict[str, str]:
