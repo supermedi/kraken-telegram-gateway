@@ -7,3 +7,16 @@ gateway.db
 *.sqlite
 *.sqlite3
 .pytest_cache/
+
+# OpenClaw private workspace files: never commit agent memory, local notes, or media.
+AGENTS.md
+SOUL.md
+USER.md
+MEMORY.md
+TOOLS.md
+HEARTBEAT.md
+BOOT.md
+BOOT*.md
+IDENTITY.md
+memory/
+media/

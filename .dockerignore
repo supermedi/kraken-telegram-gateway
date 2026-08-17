@@ -10,6 +10,15 @@ gateway.db
 *.sqlite
 *.sqlite3
 memory/
+media/
+AGENTS.md
+SOUL.md
+USER.md
 MEMORY.md
+TOOLS.md
+HEARTBEAT.md
 DEV_LOG.md
+BOOT.md
 BOOTSTRAP.md
+BOOT*.md
+IDENTITY.md

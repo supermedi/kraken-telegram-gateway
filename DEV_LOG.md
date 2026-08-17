@@ -21,6 +21,7 @@ The hourly isolated cron must use this file as the handoff point between runs:
 - Trading model: trade previews are persisted with planned entry orders and reduce-only target exit orders; repeated cancellation retries are no-ops that avoid duplicate audit events; confirmed entries can be marked `filled`, which moves target exits to `ready_to_submit`; ready targets can then be marked `dry_run_submitted` with local external ids and no Kraken network submission; mixed target submission results report submitted and blocked counts, plus a `targets_blocked` audit event; repeated target submission retries are no-ops that preserve existing ids and avoid duplicate audit events; `/trades` lists recent trades with `limit`, `offset`, `status`, `pair`, and `side` filters; `/trades/{trade_id}` returns the trade plus attached orders; `/trades/{trade_id}/orders` returns attached orders with optional `status` and `role` filters; `/audit` lists recent audit events with `trade_id` and `event_type` filters; `/audit/event-types` returns local audit event-type counters.
 - Kraken Futures: authenticated REST signing, private request preparation, read-only `/derivatives/api/v3/accounts` balance lookup exposed through Telegram `/balance`/`/solde` and API `GET /balance` with optional filters, a local-first/public-fallback instrument metadata provider, a metadata cache validator CLI, safe entry/target limit-order payload boundaries, live order POST submission to `/derivatives/api/v3/sendorder`, and live order cancellation via `/derivatives/api/v3/cancelorder` are implemented behind the existing live gates.
 - Deployment: Dockerfile, Docker Compose, GHCR publish workflow, final public image name `ghcr.io/supermedi/kraken-telegram-gateway:latest`, and deployment documentation are in place; runtime secrets stay in local `.env`.
+- Repository hygiene: `.gitignore` and `.dockerignore` explicitly exclude private OpenClaw workspace files, local memory/media, local env files, caches, and SQLite databases.
 - GitHub: dedicated public repository created and initial code pushed to `https://github.com/supermedi/kraken-telegram-gateway`.
 - Verification baseline: `python3 -m pytest -q` was last reported passing with 134 tests on 2026-08-17.
 - Scalping mode: V1 foundation implemented as a separate paper-first session mode with persistent `ScalpSession`/`ScalpTrade`/`ScalpSignal` tables, `/scalp_start`, `/scalp_status`, `/scalp_stop`, `/scalp_report`, `/scalp_tick_kraken`, API endpoints including `GET /scalp/{session_id}/report`, multi-minute `max_hold`, synthetic market-data runner, injectable active-session scheduler, Kraken Futures public WebSocket snapshot collection, opt-in FastAPI background loop, offline deterministic replay CLI for one or more JSON/JSONL/CSV snapshot files, common historical book export aliases, nested order-book export levels such as `bids`/`asks` and Binance `b`/`a`, raw public Kraken Futures WebSocket book/ticker message replay, multi-file replay summaries, and paper metrics for winrate, gross/net PnL, estimated fees, max drawdown, rejected signals, close reasons, and stop reason. Experimental `mode=live` can submit one Kraken limit entry per signal only when `SCALP_LIVE_ENABLED=true`, existing live gates are open, the pair is allowed, and amount is under `SCALP_LIVE_MAX_AMOUNT_USDC`; automatic live exits and fill tracking are not implemented yet.
@@ -47,6 +48,20 @@ The hourly isolated cron must use this file as the handoff point between runs:
 6. Extend audit/balance/Telegram diagnostics only if operators need retention/export, balance freshness, richer webhook failure visibility, or additional mobile command ergonomics.
 
 ## Cycle Log
+
+### 2026-08-17 19:44 UTC - Private Workspace Ignore Guardrails
+
+- Chose a higher-priority repository safety task discovered during pre-edit inspection: `git status` was noisy with untracked private OpenClaw files even though cron commits must never include them.
+- Extended `.gitignore` to exclude `AGENTS.md`, `SOUL.md`, `USER.md`, `MEMORY.md`, `TOOLS.md`, `HEARTBEAT.md`, `BOOT*.md`, `IDENTITY.md`, `memory/`, and `media/`.
+- Aligned `.dockerignore` so Docker build contexts also exclude the private OpenClaw files, local memory/media, and existing runtime-only artifacts.
+- Attempted Docker validation for Next Queue item 1, but Docker is not installed in this cron environment; VPS/GHCR validation remains pending.
+- Kept Kraken safety guardrails unchanged: no live-trading flag, dry-run default, credentials, Kraken network-order path, or live execution behavior was changed.
+
+Files changed: `.gitignore`, `.dockerignore`, `DEV_LOG.md`.
+
+Tests: `git check-ignore -v AGENTS.md SOUL.md USER.md MEMORY.md TOOLS.md HEARTBEAT.md BOOT.md BOOTSTRAP.md IDENTITY.md memory/2026-08-17.md media/x` -> all private paths ignored. `python3 -m pytest -q` -> 134 passed, 1 known Starlette warning. `docker version` -> unavailable (`docker: command not found`).
+
+Commit local: `Add private workspace ignore guardrails` (hash final reported in the cycle report).
 
 ### 2026-08-17 18:44 UTC - Nested Order-Book Replay Inputs
 
