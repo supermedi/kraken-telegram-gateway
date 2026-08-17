@@ -694,6 +694,103 @@ def test_cancel_command_retry_is_idempotent_for_mobile_operators():
     assert len(audits) == 1
 
 
+def test_cancel_command_cancels_live_submitted_order_before_local_status(monkeypatch):
+    cancelled_ids = []
+
+    def fake_cancel_order(self, external_order_id):
+        cancelled_ids.append(external_order_id)
+        return {"mode": "live", "message": "Live Kraken order cancelled."}
+
+    monkeypatch.setattr("kraken_telegram_gateway.gateway.kraken.KrakenClient.cancel_order", fake_cancel_order)
+    settings = Settings(max_amount_usdc=100, dry_run=False, live_trading_enabled=True)
+    with make_session() as session:
+        trade = Trade(
+            id="trade-live",
+            pair="PF_XBTUSD",
+            side="buy",
+            amount_usdc=100,
+            entry_type="limit",
+            entry_price=65000,
+            targets_json="[]",
+            leverage=2,
+            status="live_submitted",
+            dry_run=False,
+        )
+        order = TradeOrder(
+            id="order-live",
+            trade_id=trade.id,
+            role=OrderRole.ENTRY,
+            pair=trade.pair,
+            side=trade.side,
+            price=trade.entry_price,
+            amount_usdc=trade.amount_usdc,
+            status=OrderStatus.LIVE_SUBMITTED,
+            external_order_id="OID-123",
+        )
+        session.add(trade)
+        session.add(order)
+        session.commit()
+
+        reply = dispatch_telegram_text("/cancel trade-live", session, settings)
+        refreshed_order = session.get(TradeOrder, "order-live")
+
+    assert cancelled_ids == ["OID-123"]
+    assert "Trade annule" in reply
+    assert "Statut: cancelled" in reply
+    assert refreshed_order.status == OrderStatus.CANCELLED
+
+
+def test_cancel_command_does_not_mark_live_trade_cancelled_when_kraken_cancel_fails(monkeypatch):
+    def fake_cancel_order(self, external_order_id):
+        return {
+            "mode": "blocked",
+            "message": "Live Kraken cancellation failed: cancelStatus.status=notfound",
+        }
+
+    monkeypatch.setattr("kraken_telegram_gateway.gateway.kraken.KrakenClient.cancel_order", fake_cancel_order)
+    settings = Settings(max_amount_usdc=100, dry_run=False, live_trading_enabled=True)
+    with make_session() as session:
+        trade = Trade(
+            id="trade-live",
+            pair="PF_XBTUSD",
+            side="buy",
+            amount_usdc=100,
+            entry_type="limit",
+            entry_price=65000,
+            targets_json="[]",
+            leverage=2,
+            status="live_submitted",
+            dry_run=False,
+        )
+        order = TradeOrder(
+            id="order-live",
+            trade_id=trade.id,
+            role=OrderRole.ENTRY,
+            pair=trade.pair,
+            side=trade.side,
+            price=trade.entry_price,
+            amount_usdc=trade.amount_usdc,
+            status=OrderStatus.LIVE_SUBMITTED,
+            external_order_id="OID-123",
+        )
+        session.add(trade)
+        session.add(order)
+        session.commit()
+
+        reply = dispatch_telegram_text("/cancel trade-live", session, settings)
+        refreshed_trade = session.get(Trade, "trade-live")
+        refreshed_order = session.get(TradeOrder, "order-live")
+        audit = session.exec(
+            select(AuditEvent).where(AuditEvent.trade_id == "trade-live", AuditEvent.event_type == "trade_cancel_blocked")
+        ).one()
+
+    assert "Live Kraken cancellation failed" in reply
+    assert "Statut: live_submitted" in reply
+    assert refreshed_trade.status == "live_submitted"
+    assert refreshed_order.status == OrderStatus.LIVE_SUBMITTED
+    assert "cancelStatus.status=notfound" in audit.message
+
+
 def test_entry_filled_command_rejects_unconfirmed_trade():
     settings = Settings(max_amount_usdc=100)
     with make_session() as session:

@@ -89,7 +89,7 @@ def confirm_trade(trade_id: str, session: Session, settings: Settings) -> Confir
     return ConfirmResult(trade_id=trade.id, status=trade.status, message=result["message"])
 
 
-def cancel_trade(trade_id: str, session: Session) -> ConfirmResult:
+def cancel_trade(trade_id: str, session: Session, settings: Settings) -> ConfirmResult:
     trade = session.get(Trade, trade_id)
     if trade is None:
         return ConfirmResult(trade_id=trade_id, status="not_found", message="Trade introuvable.")
@@ -99,6 +99,26 @@ def cancel_trade(trade_id: str, session: Session) -> ConfirmResult:
             status=trade.status,
             message="Trade deja annule. Aucun changement applique.",
         )
+    live_orders = list_live_cancellable_orders(trade.id, session)
+    if live_orders:
+        client = KrakenClient(settings)
+        for order in live_orders:
+            if order.external_order_id is None:
+                continue
+            result = client.cancel_order(order.external_order_id)
+            if result["mode"] == "blocked":
+                session.add(
+                    AuditEvent(
+                        trade_id=trade.id,
+                        event_type="trade_cancel_blocked",
+                        message=result["message"],
+                    )
+                )
+                session.commit()
+                return ConfirmResult(trade_id=trade.id, status=trade.status, message=result["message"])
+            order.status = OrderStatus.CANCELLED
+            order.updated_at = utc_now()
+            session.add(order)
     trade.status = TradeStatus.CANCELLED
     trade.updated_at = utc_now()
     session.add(trade)
@@ -552,6 +572,16 @@ def cancel_planned_orders(trade_id: str, session: Session) -> None:
         order.status = OrderStatus.CANCELLED
         order.updated_at = utc_now()
         session.add(order)
+
+
+def list_live_cancellable_orders(trade_id: str, session: Session) -> list[TradeOrder]:
+    return session.exec(
+        select(TradeOrder).where(
+            TradeOrder.trade_id == trade_id,
+            TradeOrder.status == OrderStatus.LIVE_SUBMITTED,
+            TradeOrder.external_order_id.is_not(None),
+        )
+    ).all()
 
 
 def opposite_side(side: str) -> str:

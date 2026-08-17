@@ -607,6 +607,84 @@ def test_live_target_submission_posts_reduce_only_order_after_metadata_payload_i
     assert calls[0][3] == "symbol=PF_XBTUSD&orderType=lmt&side=sell&size=11.5&limitPrice=67000&reduceOnly=true"
 
 
+def test_live_order_cancellation_posts_signed_cancel_order(monkeypatch):
+    calls = []
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"result": "success", "cancelStatus": {"order_id": "OID-123", "status": "cancelled"}}
+
+    def fake_request(method, url, *, headers, content, timeout):
+        calls.append((method, url, headers, content, timeout))
+        return FakeResponse()
+
+    monkeypatch.setattr("kraken_telegram_gateway.gateway.kraken.httpx.request", fake_request)
+    client = KrakenClient(
+        Settings(
+            dry_run=False,
+            live_trading_enabled=True,
+            kraken_api_key="public-key",
+            kraken_api_secret="dGVzdC1zZWNyZXQ=",
+        )
+    )
+
+    result = client.cancel_order("OID-123")
+
+    assert result == {
+        "mode": "live",
+        "message": "Live Kraken order cancelled.",
+    }
+    assert calls == [
+        (
+            "POST",
+            "https://futures.kraken.com/derivatives/api/v3/cancelorder",
+            calls[0][2],
+            "order_id=OID-123",
+            10,
+        )
+    ]
+    assert calls[0][2]["APIKey"] == "public-key"
+    assert "Authent" in calls[0][2]
+
+
+def test_live_order_cancellation_is_blocked_when_cancel_status_rejects(monkeypatch):
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "result": "success",
+                "cancelStatus": {
+                    "status": "notFound",
+                    "reason": "order not found",
+                },
+            }
+
+    monkeypatch.setattr(
+        "kraken_telegram_gateway.gateway.kraken.httpx.request",
+        lambda method, url, *, headers, content, timeout: FakeResponse(),
+    )
+    client = KrakenClient(
+        Settings(
+            dry_run=False,
+            live_trading_enabled=True,
+            kraken_api_key="public-key",
+            kraken_api_secret="dGVzdC1zZWNyZXQ=",
+        )
+    )
+
+    result = client.cancel_order("OID-123")
+
+    assert result == {
+        "mode": "blocked",
+        "message": "Live Kraken cancellation failed: cancelStatus.status=notfound; reason=order not found",
+    }
+
+
 def test_live_entry_submission_is_blocked_when_kraken_rejects_order(tmp_path, monkeypatch):
     class FakeResponse:
         def raise_for_status(self):

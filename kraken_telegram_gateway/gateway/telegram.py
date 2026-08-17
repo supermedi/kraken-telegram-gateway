@@ -103,7 +103,7 @@ def dispatch_telegram_text(text: str, session: Session, settings: Settings) -> s
 
         if command == "/cancel":
             trade_id = _require_trade_id(argument, "/cancel")
-            result = cancel_trade(trade_id, session)
+            result = cancel_trade(trade_id, session, settings)
             return f"{result.message}\nTrade ID: {result.trade_id}\nStatut: {result.status}"
 
         if command in {"/entry_filled", "/entry-filled"}:

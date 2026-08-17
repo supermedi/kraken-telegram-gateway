@@ -35,6 +35,10 @@ class KrakenOrderSubmissionError(RuntimeError):
     """Raised when Kraken rejects or fails an order submission."""
 
 
+class KrakenOrderCancellationError(RuntimeError):
+    """Raised when Kraken rejects or fails an order cancellation."""
+
+
 @dataclass(frozen=True)
 class KrakenAuthenticatedRequest:
     method: str
@@ -159,6 +163,7 @@ class KrakenFuturesSigner:
 class KrakenClient:
     API_PREFIX = "/derivatives"
     SEND_ORDER_PATH = "/api/v3/sendorder"
+    CANCEL_ORDER_PATH = "/api/v3/cancelorder"
     ACCOUNTS_PATH = "/api/v3/accounts"
 
     def __init__(
@@ -228,6 +233,25 @@ class KrakenClient:
             "message": "Live Kraken target order submitted.",
         }
 
+    def cancel_order(self, external_order_id: str) -> dict[str, str]:
+        if not self.settings.can_live_trade:
+            return {
+                "mode": "dry_run",
+                "message": "Dry-run: no Kraken order cancellation was submitted.",
+            }
+
+        try:
+            self.cancel_live_order(external_order_id)
+        except KrakenOrderCancellationError as exc:
+            return {
+                "mode": "blocked",
+                "message": f"Live Kraken cancellation failed: {exc}",
+            }
+        return {
+            "mode": "live",
+            "message": "Live Kraken order cancelled.",
+        }
+
     def submit_live_order(self, payload: Mapping[str, str | int | float | bool | None]) -> str:
         request = self.build_private_request("POST", self.SEND_ORDER_PATH, payload)
         try:
@@ -250,6 +274,29 @@ class KrakenClient:
         if str(response_payload.get("result", "success")).lower() != "success":
             raise KrakenOrderSubmissionError(str(response_payload.get("error") or response_payload))
         return extract_placed_order_id(response_payload)
+
+    def cancel_live_order(self, external_order_id: str) -> None:
+        request = self.build_private_request("POST", self.CANCEL_ORDER_PATH, {"order_id": external_order_id})
+        try:
+            response = httpx.request(
+                request.method,
+                request.url,
+                headers=request.headers,
+                content=request.post_data,
+                timeout=10,
+            )
+            response.raise_for_status()
+            response_payload = response.json()
+        except httpx.HTTPError as exc:
+            raise KrakenOrderCancellationError(f"request failed: {exc}") from exc
+        except ValueError as exc:
+            raise KrakenOrderCancellationError("response is not valid JSON") from exc
+
+        if not isinstance(response_payload, Mapping):
+            raise KrakenOrderCancellationError("response payload is not an object")
+        if str(response_payload.get("result", "success")).lower() != "success":
+            raise KrakenOrderCancellationError(str(response_payload.get("error") or response_payload))
+        validate_cancel_status(response_payload)
 
     def fetch_account_balances(self) -> list[AccountBalance]:
         request = self.build_account_request()
@@ -491,6 +538,20 @@ def format_send_order_rejection(send_status: Mapping[str, object]) -> str:
         if event_types:
             details.append(f"orderEvents={','.join(event_types)}")
     return "; ".join(details)
+
+
+def validate_cancel_status(payload: Mapping[str, object]) -> None:
+    cancel_status = payload.get("cancelStatus")
+    if not isinstance(cancel_status, Mapping):
+        return
+    status = str(cancel_status.get("status") or "").lower()
+    if status == "cancelled":
+        return
+    details = [f"cancelStatus.status={status or 'unknown'}"]
+    reason = cancel_status.get("error") or cancel_status.get("reason") or cancel_status.get("message")
+    if reason:
+        details.append(f"reason={reason}")
+    raise KrakenOrderCancellationError("; ".join(details))
 
 
 def calculate_contract_size(

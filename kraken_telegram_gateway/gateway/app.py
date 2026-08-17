@@ -92,8 +92,12 @@ def confirm_command(
 
 
 @app.post("/commands/cancel/{trade_id}", response_model=ConfirmResult)
-def cancel_command(trade_id: str, session: Session = Depends(get_session)) -> ConfirmResult:
-    return cancel_trade(trade_id, session)
+def cancel_command(
+    trade_id: str,
+    session: Session = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> ConfirmResult:
+    return cancel_trade(trade_id, session, settings)
 
 
 @app.post("/commands/entry-filled/{trade_id}", response_model=ConfirmResult)
