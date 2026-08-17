@@ -185,15 +185,21 @@ def dispatch_telegram_text(text: str, session: Session, settings: Settings) -> s
 
 
 def format_trade_action_commands(trade_id: str) -> str:
-    return f"```bash\n/confirm {trade_id}\n```\n```bash\n/cancel {trade_id}\n```"
+    return f"```bash\n/confirm {trade_id}\n```\n\n```bash\n/cancel {trade_id}\n```"
 
 
 def render_telegram_html(text: str) -> str:
     parts = []
     cursor = 0
-    for match in re.finditer(r"```(?:[A-Za-z0-9_-]+)?\n(.*?)```", text, flags=re.DOTALL):
+    for match in re.finditer(r"```([A-Za-z0-9_-]+)?\n(.*?)```", text, flags=re.DOTALL):
         parts.append(html.escape(text[cursor : match.start()]))
-        parts.append(f"<pre>{html.escape(match.group(1).rstrip())}</pre>")
+        language = match.group(1)
+        code = html.escape(match.group(2).rstrip())
+        if language:
+            escaped_language = html.escape(language)
+            parts.append(f'<pre><code class="language-{escaped_language}">{code}</code></pre>')
+        else:
+            parts.append(f"<pre>{code}</pre>")
         cursor = match.end()
     parts.append(html.escape(text[cursor:]))
     return "".join(parts)

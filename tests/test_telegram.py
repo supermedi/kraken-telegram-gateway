@@ -38,14 +38,23 @@ def test_trade_message_creates_preview_and_confirm_hint():
     assert "Avertissement: Aucun stop loss" in reply
     assert "Confirmer: /confirm" in reply
     assert "```bash\n/confirm " in reply
-    assert "```\n```bash\n/cancel " in reply
+    assert "```\n\n```bash\n/cancel " in reply
     assert reply.endswith("```")
 
 
 def test_render_telegram_html_preserves_code_block_without_markdown_underscores():
     rendered = render_telegram_html("Pair PF_XBTUSD\n```bash\n/confirm trade-1\n```")
 
-    assert rendered == "Pair PF_XBTUSD\n<pre>/confirm trade-1</pre>"
+    assert rendered == 'Pair PF_XBTUSD\n<pre><code class="language-bash">/confirm trade-1</code></pre>'
+
+
+def test_render_telegram_html_keeps_separate_action_blocks_spaced_for_copy_buttons():
+    rendered = render_telegram_html("```bash\n/confirm trade-1\n```\n\n```bash\n/cancel trade-1\n```")
+
+    assert rendered == (
+        '<pre><code class="language-bash">/confirm trade-1</code></pre>\n\n'
+        '<pre><code class="language-bash">/cancel trade-1</code></pre>'
+    )
 
 
 @pytest.mark.anyio
@@ -83,7 +92,7 @@ async def test_send_telegram_message_enables_html_parse_mode(monkeypatch):
             "https://api.telegram.org/bottoken/sendMessage",
             {
                 "chat_id": 123,
-                "text": "<pre>/confirm trade-1</pre>",
+                "text": '<pre><code class="language-bash">/confirm trade-1</code></pre>',
                 "parse_mode": "HTML",
             },
             10,
