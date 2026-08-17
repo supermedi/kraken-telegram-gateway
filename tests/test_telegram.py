@@ -38,7 +38,7 @@ def test_trade_message_creates_preview_and_confirm_hint():
     assert "Avertissement: Aucun stop loss" in reply
     assert "Confirmer: /confirm" in reply
     assert "```bash\n/confirm " in reply
-    assert "\n/cancel " in reply
+    assert "```\n```bash\n/cancel " in reply
     assert reply.endswith("```")
 
 

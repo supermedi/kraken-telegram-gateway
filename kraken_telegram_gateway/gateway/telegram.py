@@ -185,7 +185,7 @@ def dispatch_telegram_text(text: str, session: Session, settings: Settings) -> s
 
 
 def format_trade_action_commands(trade_id: str) -> str:
-    return f"```bash\n/confirm {trade_id}\n/cancel {trade_id}\n```"
+    return f"```bash\n/confirm {trade_id}\n```\n```bash\n/cancel {trade_id}\n```"
 
 
 def render_telegram_html(text: str) -> str:

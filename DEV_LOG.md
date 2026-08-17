@@ -46,6 +46,16 @@ The hourly isolated cron must use this file as the handoff point between runs:
 
 ## Cycle Log
 
+### 2026-08-17 00:28 UTC - Separate Telegram Action Blocks
+
+- Split the Telegram preview copy helper into two separate `bash` blocks: one for `/confirm <trade_id>` and one for `/cancel <trade_id>`.
+- Kept the existing plain confirm/cancel hint lines for readability and compatibility.
+- Updated README documentation for the mobile copy behavior.
+
+Files changed: `kraken_telegram_gateway/gateway/telegram.py`, `tests/test_telegram.py`, `README.md`, `DEV_LOG.md`.
+
+Tests: `python3 -m pytest tests/test_telegram.py::test_trade_message_creates_preview_and_confirm_hint tests/test_telegram.py::test_render_telegram_html_preserves_code_block_without_markdown_underscores -q` -> 2 passed. `python3 -m compileall -q kraken_telegram_gateway` -> OK. `python3 -m pytest -q` -> 97 passed, 1 Starlette/TestClient deprecation warning.
+
 ### 2026-08-16 23:24 UTC - Copyable Trade Actions
 
 - Added a `bash` code block to Telegram trade previews with ready-to-copy `/confirm <trade_id>` and `/cancel <trade_id>` commands.
