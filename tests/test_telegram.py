@@ -15,6 +15,7 @@ from kraken_telegram_gateway.gateway.models import (
     Trade,
     TradeOrder,
 )
+from kraken_telegram_gateway.gateway.schemas import ScalpSchedulerResult
 from kraken_telegram_gateway.gateway.telegram import (
     dispatch_telegram_messages,
     dispatch_telegram_text,
@@ -148,6 +149,56 @@ def test_scalp_status_stop_and_report_use_paper_metrics():
     assert scalp_session is not None
     assert scalp_session.status == ScalpSessionStatus.STOPPED
     assert scalp_session.stop_reason == "manual_stop"
+
+
+def test_scalp_tick_kraken_runs_scheduler_from_telegram(monkeypatch):
+    calls = []
+
+    def fake_run_active_scalp_paper_sessions_from_kraken(session, *, snapshots_per_session, timeout_seconds):
+        calls.append(
+            {
+                "session": session,
+                "snapshots_per_session": snapshots_per_session,
+                "timeout_seconds": timeout_seconds,
+            }
+        )
+        return ScalpSchedulerResult(
+            scanned=1,
+            processed=1,
+            skipped=0,
+            messages=["scalp-1: Session scalp traitee."],
+        )
+
+    monkeypatch.setattr(
+        "kraken_telegram_gateway.gateway.telegram.run_active_scalp_paper_sessions_from_kraken",
+        fake_run_active_scalp_paper_sessions_from_kraken,
+    )
+
+    with make_session() as session:
+        reply = dispatch_telegram_text(
+            "/scalp_tick_kraken snapshots=2 timeout=3",
+            session,
+            Settings(max_amount_usdc=100),
+        )
+
+    assert calls[0]["snapshots_per_session"] == 2
+    assert calls[0]["timeout_seconds"] == 3
+    assert "Tick Kraken scalp paper termine" in reply
+    assert "Sessions scannees: 1" in reply
+    assert "Traitees: 1" in reply
+    assert "- scalp-1: Session scalp traitee." in reply
+
+
+def test_scalp_tick_kraken_rejects_invalid_options():
+    with make_session() as session:
+        reply = dispatch_telegram_text(
+            "/scalp_tick_kraken snapshots=99",
+            session,
+            Settings(max_amount_usdc=100),
+        )
+
+    assert "Commande refusee" in reply
+    assert "snapshots must be between 1 and 10" in reply
 
 
 def test_render_telegram_html_preserves_code_block_without_markdown_underscores():

@@ -34,6 +34,7 @@ from kraken_telegram_gateway.gateway.service import (
     mark_entry_filled,
     pause_trading,
     resume_trading,
+    run_active_scalp_paper_sessions_from_kraken,
     start_scalp_session,
     stop_scalp_session,
     submit_ready_targets,
@@ -196,6 +197,11 @@ def dispatch_telegram_text(text: str, session: Session, settings: Settings) -> s
                 return "Session scalp introuvable."
             return format_scalp_report(detail)
 
+        if command in {"/scalp_tick_kraken", "/scalp-tick-kraken"}:
+            options = _parse_scalp_tick_kraken_options(argument)
+            result = run_active_scalp_paper_sessions_from_kraken(session, **options)
+            return format_scalp_scheduler_result(result)
+
         if command == "/pause":
             return pause_trading(session)
 
@@ -213,6 +219,7 @@ def dispatch_telegram_text(text: str, session: Session, settings: Settings) -> s
                 "/balance [account=... currency=...|asset=...], "
                 "/scalp_start pair=PF_LINKUSD amount_usdc=100 duration=60m max_hold=5m max_losses=3, "
                 "/scalp_status <session_id>, /scalp_stop <session_id>, /scalp_report <session_id>, "
+                "/scalp_tick_kraken [snapshots=1 timeout=10], "
                 "/pause, /resume.\n"
                 "Exemple: /trade pair=PF_XBTUSD side=buy amount_usdc=100 entry=limit:65000 "
                 "t1=67000:40% t2=69000:40% t3=72000:20%\n"
@@ -232,6 +239,19 @@ def dispatch_telegram_text(text: str, session: Session, settings: Settings) -> s
 
 def format_trade_action_commands(trade_id: str) -> str:
     return f"```bash\n/confirm {trade_id}\n```\n\n```bash\n/cancel {trade_id}\n```"
+
+
+def format_scalp_scheduler_result(result) -> str:
+    lines = [
+        "Tick Kraken scalp paper termine.",
+        f"Sessions scannees: {result.scanned}",
+        f"Traitees: {result.processed}",
+        f"Ignorees: {result.skipped}",
+    ]
+    if result.messages:
+        lines.append("Messages:")
+        lines.extend(f"- {message}" for message in result.messages)
+    return "\n".join(lines)
 
 
 def extract_trade_id_from_reply(reply: str) -> str | None:
@@ -309,6 +329,31 @@ def _require_scalp_session_id(argument: str, command: str) -> str:
     if not argument:
         raise ValueError(f"{command} requires a session_id")
     return argument.split()[0]
+
+
+def _parse_scalp_tick_kraken_options(argument: str) -> dict[str, int | float]:
+    options: dict[str, int | float] = {"snapshots_per_session": 1, "timeout_seconds": 10}
+    allowed_keys = {"snapshots", "snapshots_per_session", "timeout", "timeout_seconds"}
+    for token in argument.split():
+        if "=" not in token:
+            raise ValueError("/scalp_tick_kraken options must be key=value")
+        key, value = token.split("=", 1)
+        key = key.lower()
+        if key not in allowed_keys:
+            raise ValueError(f"unsupported /scalp_tick_kraken option: {key}")
+        if not value:
+            raise ValueError(f"/scalp_tick_kraken {key} cannot be empty")
+        if key in {"snapshots", "snapshots_per_session"}:
+            snapshots = int(value)
+            if snapshots < 1 or snapshots > 10:
+                raise ValueError("/scalp_tick_kraken snapshots must be between 1 and 10")
+            options["snapshots_per_session"] = snapshots
+        else:
+            timeout = float(value)
+            if timeout < 1 or timeout > 60:
+                raise ValueError("/scalp_tick_kraken timeout must be between 1 and 60 seconds")
+            options["timeout_seconds"] = timeout
+    return options
 
 
 def _parse_order_filters(argument: str) -> tuple[str, dict]:

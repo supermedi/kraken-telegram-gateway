@@ -20,6 +20,7 @@ Companion commands:
 /scalp_status [session_id]
 /scalp_stop <session_id>
 /scalp_report <session_id>
+/scalp_tick_kraken snapshots=2 timeout=10
 ```
 
 The first implementation must be paper-only. Live execution can be added later behind the existing live gates plus a dedicated scalping gate.
@@ -118,6 +119,7 @@ Implemented:
 - Persistent `ScalpSession`, `ScalpTrade`, and `ScalpSignal` tables.
 - `/scalp_start` parser with `duration=60m`, `max_hold=5m`, `max_losses=3`, `min_pnl=5`, `amount`/`amount_usdc`, and `mode=paper`.
 - Telegram commands `/scalp_start`, `/scalp_status`, `/scalp_stop`, and `/scalp_report`.
+- Telegram command `/scalp_tick_kraken` to run a manual Kraken public WebSocket paper tick.
 - API endpoints `POST /commands/scalp-start`, `GET /scalp/{session_id}`, and `POST /commands/scalp-stop/{session_id}`.
 - Paper-only enforcement: `mode=live` is rejected.
 - Compact status/report formatting and basic PnL metrics from persisted paper trades.
@@ -139,7 +141,7 @@ Not implemented yet:
 2. Done: add market-data adapter interface and deterministic tests with synthetic ticks/book snapshots.
 3. Done: add paper runner with one open trade at a time and core stop rules.
 4. Done: add background scheduling for active paper sessions through an injectable snapshot provider and manual API tick.
-5. Done: add Kraken WebSocket market-data integration for manual paper scheduler ticks.
+5. Done: add Kraken WebSocket market-data integration for manual paper scheduler ticks through API and Telegram.
 6. Add a periodic background loop for active paper sessions.
 7. Only after repeated paper validation, add a separate `SCALPING_LIVE_ENABLED=true` gate for live orders.
 
