@@ -23,6 +23,7 @@ The hourly isolated cron must use this file as the handoff point between runs:
 - Deployment: Dockerfile, Docker Compose, GHCR publish workflow, final public image name `ghcr.io/supermedi/kraken-telegram-gateway:latest`, and deployment documentation are in place; runtime secrets stay in local `.env`.
 - GitHub: dedicated public repository created and initial code pushed to `https://github.com/supermedi/kraken-telegram-gateway`.
 - Verification baseline: `python3 -m pytest -q` was last reported passing with 107 tests on 2026-08-17.
+- Scalping mode: design prepared in `SCALPING_MODE.md` as a separate paper-first session mode with `/scalp_start`, `/scalp_status`, `/scalp_stop`, `/scalp_report`, multi-minute holds, max-loss auto stop, and net-PnL reporting before any live gate.
 
 ## Guardrails
 
@@ -40,11 +41,23 @@ The hourly isolated cron must use this file as the handoff point between runs:
 
 1. Validate Docker build in the target VPS environment, then confirm GHCR pull/run health against `ghcr.io/supermedi/kraken-telegram-gateway:latest`.
 2. Validate Docker/GHCR deployment on the VPS with the public Kraken instrument metadata fallback enabled.
-3. Add Kraken account-event polling/webhook abstraction for real entry fill detection only after live integration is explicitly approved.
-4. Monitor target-submission partial-block diagnostics in live-gated testing and refine only if operator feedback remains unclear.
-5. Extend audit/balance/Telegram diagnostics only if operators need retention/export, balance freshness, richer webhook failure visibility, or additional mobile command ergonomics.
+3. Implement scalping V1 foundation in paper-only mode: parser, models, synthetic market-data adapter, session lifecycle, and stop-rule tests from `SCALPING_MODE.md`.
+4. Add Kraken account-event polling/webhook abstraction for real entry fill detection only after live integration is explicitly approved.
+5. Monitor target-submission partial-block diagnostics in live-gated testing and refine only if operator feedback remains unclear.
+6. Extend audit/balance/Telegram diagnostics only if operators need retention/export, balance freshness, richer webhook failure visibility, or additional mobile command ergonomics.
 
 ## Cycle Log
+
+### 2026-08-17 02:06 UTC - Scalping Mode Design
+
+- Prepared `SCALPING_MODE.md` for a separate experimental scalping mode instead of extending the manual `/trade` lifecycle.
+- Captured the requested behavior: a session such as 60 minutes, repeated short trades that may last seconds or several minutes, minimum target net PnL per trade, and automatic stop after 3 losses.
+- Defined a paper-first flow with one active session per pair, one open scalp trade at a time, max-hold exits, manual `/scalp_stop`, and compact Telegram reporting.
+- Kept live trading blocked by design until a later dedicated `SCALPING_LIVE_ENABLED=true` gate exists and paper metrics justify it.
+
+Files changed: `SCALPING_MODE.md`, `README.md`, `DEV_LOG.md`.
+
+Tests: documentation-only change; no runtime tests required.
 
 ### 2026-08-17 01:44 UTC - Target Partial-Block Diagnostics
 

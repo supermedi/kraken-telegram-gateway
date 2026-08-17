@@ -121,6 +121,8 @@ Les filtres Telegram `status`, `role`, `event_type`, `type` et `event` acceptent
 `/audit_types` ou `/audit-types` affiche les types d'evenements d'audit disponibles avec leurs compteurs, pratique pour choisir un filtre `event_type`.
 `/balance` ou `/solde` interroge le endpoint Kraken Futures `/derivatives/api/v3/accounts` en lecture seule et affiche les soldes par compte/devise. Les lignes sans solde numerique ou avec uniquement des zeros sont masquees, pour garder seulement les comptes utiles comme `flex USDC`. Les filtres optionnels `account` et `currency` permettent de limiter la reponse, par exemple `/balance account=flex currency=USDC`. Les alias `asset=...` et `devise=...` sont aussi acceptes pour filtrer la devise plus vite depuis Telegram. Cette commande exige des cles API Futures (`KRAKEN_API_KEY` et `KRAKEN_API_SECRET`), pas des cles Spot, et reste disponible en dry-run. Si Kraken renvoie `authenticationError`, verifier aussi que `KRAKEN_FUTURES_BASE_URL` correspond au compte des cles (`https://futures.kraken.com` pour live, `https://demo-futures.kraken.com` pour demo).
 
+Un mode scalping experimental est prepare dans [SCALPING_MODE.md](SCALPING_MODE.md). Il doit demarrer en paper-only avec `/scalp_start`, accepter des trades qui durent de quelques secondes a quelques minutes, appliquer un arret automatique apres `max_losses`, et mesurer le PnL net apres frais/spread/slippage avant toute activation live separee.
+
 ## Exemple
 
 ```bash
