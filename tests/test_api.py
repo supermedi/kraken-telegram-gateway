@@ -226,6 +226,23 @@ def test_scalp_session_api_creates_and_stops_paper_session():
     assert stop_response.json()["status"] == "stopped"
 
 
+def test_scalp_scheduler_tick_reports_active_sessions_without_market_data_provider():
+    with api_client() as client:
+        start_response = client.post(
+            "/commands/scalp-start",
+            json={"text": "/scalp_start pair=PF_LINKUSD amount_usdc=100 duration=60m max_hold=5m"},
+        )
+        session_id = start_response.json()["session_id"]
+
+        scheduler_response = client.post("/scalp/scheduler/tick")
+
+    assert scheduler_response.status_code == 200
+    assert scheduler_response.json()["scanned"] == 1
+    assert scheduler_response.json()["processed"] == 0
+    assert scheduler_response.json()["skipped"] == 1
+    assert session_id in scheduler_response.json()["messages"][0]
+
+
 def test_entry_filled_api_marks_entry_filled_and_targets_ready():
     with api_client() as client:
         preview_response = create_preview(

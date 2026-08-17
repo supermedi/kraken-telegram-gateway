@@ -4,7 +4,11 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 from kraken_telegram_gateway.gateway.models import ScalpSession, ScalpSessionStatus, ScalpSignal, ScalpTrade, ScalpTradeStatus
 from kraken_telegram_gateway.gateway.scalping import MarketSnapshot
-from kraken_telegram_gateway.gateway.service import run_scalp_paper_snapshots, start_scalp_session
+from kraken_telegram_gateway.gateway.service import (
+    run_active_scalp_paper_sessions,
+    run_scalp_paper_snapshots,
+    start_scalp_session,
+)
 
 
 def make_session() -> Session:
@@ -102,3 +106,55 @@ def test_scalp_paper_runner_closes_open_trade_on_max_hold():
 
     assert trade.status == ScalpTradeStatus.PAPER_CLOSED
     assert trade.close_reason == "max_hold"
+
+
+def test_scalp_scheduler_runs_active_sessions_with_snapshot_provider():
+    with make_session() as session:
+        first = start_scalp_session(
+            "/scalp_start pair=PF_LINKUSD amount_usdc=100 leverage=2 duration=60m max_hold=5m min_pnl=1",
+            session,
+        )
+        stopped = start_scalp_session(
+            "/scalp_start pair=PF_ETHUSD amount_usdc=100 duration=60m max_hold=5m min_pnl=1",
+            session,
+        )
+        stopped_session = session.get(ScalpSession, stopped.session_id)
+        assert stopped_session is not None
+        stopped_session.status = ScalpSessionStatus.STOPPED
+        session.add(stopped_session)
+        session.commit()
+
+        def snapshot_provider(scalp_session: ScalpSession) -> list[MarketSnapshot]:
+            start = scalp_session.started_at
+            return [
+                MarketSnapshot(start + timedelta(seconds=1), bid=10, ask=10.01, bid_size=700, ask_size=300, volume_ratio=1.6),
+                MarketSnapshot(start + timedelta(seconds=90), bid=10.08, ask=10.09, bid_size=500, ask_size=500, volume_ratio=1.0),
+            ]
+
+        result = run_active_scalp_paper_sessions(session, snapshot_provider)
+        trades = session.exec(select(ScalpTrade)).all()
+
+    assert result.scanned == 1
+    assert result.processed == 1
+    assert result.skipped == 0
+    assert first.session_id in result.messages[0]
+    assert len(trades) == 1
+    assert trades[0].session_id == first.session_id
+    assert trades[0].status == ScalpTradeStatus.PAPER_CLOSED
+
+
+def test_scalp_scheduler_skips_active_session_without_snapshots():
+    with make_session() as session:
+        result = start_scalp_session(
+            "/scalp_start pair=PF_LINKUSD amount_usdc=100 duration=60m max_hold=5m",
+            session,
+        )
+
+        scheduler_result = run_active_scalp_paper_sessions(session, lambda _: [])
+        trades = session.exec(select(ScalpTrade)).all()
+
+    assert scheduler_result.scanned == 1
+    assert scheduler_result.processed == 0
+    assert scheduler_result.skipped == 1
+    assert result.session_id in scheduler_result.messages[0]
+    assert trades == []

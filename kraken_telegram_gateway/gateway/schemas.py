@@ -152,3 +152,10 @@ class ScalpSessionResult(BaseModel):
     session_id: str
     status: str
     message: str
+
+
+class ScalpSchedulerResult(BaseModel):
+    scanned: int
+    processed: int
+    skipped: int
+    messages: list[str]

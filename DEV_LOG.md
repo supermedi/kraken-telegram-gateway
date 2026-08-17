@@ -23,7 +23,7 @@ The hourly isolated cron must use this file as the handoff point between runs:
 - Deployment: Dockerfile, Docker Compose, GHCR publish workflow, final public image name `ghcr.io/supermedi/kraken-telegram-gateway:latest`, and deployment documentation are in place; runtime secrets stay in local `.env`.
 - GitHub: dedicated public repository created and initial code pushed to `https://github.com/supermedi/kraken-telegram-gateway`.
 - Verification baseline: `python3 -m pytest -q` was last reported passing with 107 tests on 2026-08-17.
-- Scalping mode: V1 foundation implemented as a separate paper-only session mode with persistent `ScalpSession`/`ScalpTrade`/`ScalpSignal` tables, `/scalp_start`, `/scalp_status`, `/scalp_stop`, `/scalp_report`, API endpoints, multi-minute `max_hold`, synthetic market-data runner, and net-PnL reporting. Background scheduling and Kraken WebSocket automation remain queued before any live gate.
+- Scalping mode: V1 foundation implemented as a separate paper-only session mode with persistent `ScalpSession`/`ScalpTrade`/`ScalpSignal` tables, `/scalp_start`, `/scalp_status`, `/scalp_stop`, `/scalp_report`, API endpoints, multi-minute `max_hold`, synthetic market-data runner, injectable active-session scheduler, and net-PnL reporting. Kraken WebSocket automation remains queued before any live gate.
 
 ## Guardrails
 
@@ -41,8 +41,8 @@ The hourly isolated cron must use this file as the handoff point between runs:
 
 1. Validate Docker build in the target VPS environment, then confirm GHCR pull/run health against `ghcr.io/supermedi/kraken-telegram-gateway:latest`.
 2. Validate Docker/GHCR deployment on the VPS with the public Kraken instrument metadata fallback enabled.
-3. Add background scheduling for active scalping paper sessions.
-4. Add Kraken WebSocket market-data integration for scalping paper sessions.
+3. Add Kraken WebSocket market-data integration for scalping paper sessions.
+4. Wire the WebSocket snapshot provider into an actual periodic background loop for active paper sessions.
 5. Add Kraken account-event polling/webhook abstraction for real entry fill detection only after live integration is explicitly approved.
 6. Monitor target-submission partial-block diagnostics in live-gated testing and refine only if operator feedback remains unclear.
 7. Extend audit/balance/Telegram diagnostics only if operators need retention/export, balance freshness, richer webhook failure visibility, or additional mobile command ergonomics.
@@ -83,6 +83,17 @@ Tests: targeted scalping Telegram/API tests passed.
 Files changed: `kraken_telegram_gateway/gateway/scalping.py`, `kraken_telegram_gateway/gateway/service.py`, `tests/test_scalping.py`, `SCALPING_MODE.md`, `DEV_LOG.md`.
 
 Tests: `python3 -m pytest tests/test_scalping.py -q` -> 3 passed. `python3 -m compileall -q kraken_telegram_gateway` -> OK.
+
+### 2026-08-17 02:38 UTC - Scalping Paper Scheduler
+
+- Added `run_active_scalp_paper_sessions` to scan all `paper_active` scalping sessions and run the existing paper runner with snapshots from an injected provider.
+- Added `ScalpSchedulerResult` plus `POST /scalp/scheduler/tick`; the current API tick intentionally uses an empty provider until Kraken WebSocket snapshots are wired.
+- Added tests for active-session scheduling, skipped sessions without snapshots, and the API tick response.
+- Kept live Kraken execution untouched.
+
+Files changed: `kraken_telegram_gateway/gateway/service.py`, `kraken_telegram_gateway/gateway/schemas.py`, `kraken_telegram_gateway/gateway/app.py`, `tests/test_scalping.py`, `tests/test_api.py`, `README.md`, `SCALPING_MODE.md`, `DEV_LOG.md`.
+
+Tests: `python3 -m pytest -q` -> 117 passed, warning Starlette connu.
 
 ### 2026-08-17 01:44 UTC - Target Partial-Block Diagnostics
 

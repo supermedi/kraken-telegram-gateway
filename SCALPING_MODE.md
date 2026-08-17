@@ -137,7 +137,7 @@ Not implemented yet:
 1. Done: add command parsing, data models, Telegram/API commands, and paper session state without market-data automation.
 2. Done: add market-data adapter interface and deterministic tests with synthetic ticks/book snapshots.
 3. Done: add paper runner with one open trade at a time and core stop rules.
-4. Add background scheduling for active paper sessions.
+4. Done: add background scheduling for active paper sessions through an injectable snapshot provider and manual API tick.
 5. Add Kraken WebSocket market-data integration.
 6. Only after repeated paper validation, add a separate `SCALPING_LIVE_ENABLED=true` gate for live orders.
 

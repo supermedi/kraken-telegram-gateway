@@ -1,4 +1,5 @@
 import json
+from collections.abc import Callable
 
 from sqlalchemy import func
 from sqlmodel import Session, select
@@ -28,6 +29,7 @@ from kraken_telegram_gateway.gateway.schemas import (
     AuditEventTypeList,
     AuditEventTypeSummary,
     ConfirmResult,
+    ScalpSchedulerResult,
     ScalpSessionDetail,
     ScalpSessionResult,
     TradeDetail,
@@ -236,6 +238,40 @@ def run_scalp_paper_snapshots(
         session_id=scalp_session.id,
         status=scalp_session.status,
         message=f"Paper runner: {opened} trade(s) ouverts, {closed} trade(s) fermes.",
+    )
+
+
+ScalpSnapshotProvider = Callable[[ScalpSession], list[MarketSnapshot]]
+
+
+def run_active_scalp_paper_sessions(
+    session: Session,
+    snapshot_provider: ScalpSnapshotProvider,
+) -> ScalpSchedulerResult:
+    active_sessions = session.exec(
+        select(ScalpSession)
+        .where(ScalpSession.status == ScalpSessionStatus.PAPER_ACTIVE)
+        .order_by(ScalpSession.started_at.asc(), ScalpSession.id.asc())
+    ).all()
+
+    processed = 0
+    skipped = 0
+    messages: list[str] = []
+    for scalp_session in active_sessions:
+        snapshots = snapshot_provider(scalp_session)
+        if not snapshots:
+            skipped += 1
+            messages.append(f"{scalp_session.id}: aucun snapshot disponible.")
+            continue
+        result = run_scalp_paper_snapshots(scalp_session.id, snapshots, session)
+        processed += 1
+        messages.append(f"{scalp_session.id}: {result.message}")
+
+    return ScalpSchedulerResult(
+        scanned=len(active_sessions),
+        processed=processed,
+        skipped=skipped,
+        messages=messages,
     )
 
 
