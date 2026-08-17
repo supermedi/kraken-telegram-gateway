@@ -5,7 +5,12 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 from kraken_telegram_gateway.gateway.models import ScalpSession, ScalpSessionStatus, ScalpSignal, ScalpTrade, ScalpTradeStatus
 from kraken_telegram_gateway.gateway.scalping import MarketSnapshot
-from kraken_telegram_gateway.gateway.scalp_replay import load_market_snapshots, run_scalp_replay, run_scalp_replay_batch
+from kraken_telegram_gateway.gateway.scalp_replay import (
+    load_market_snapshots,
+    run_scalp_replay,
+    run_scalp_replay_batch,
+    snapshots_from_rows,
+)
 from kraken_telegram_gateway.gateway.service import (
     run_active_scalp_paper_sessions,
     run_scalp_paper_snapshots,
@@ -239,6 +244,51 @@ def test_scalp_replay_loads_common_historical_book_aliases(tmp_path):
     assert snapshots[0].bid_size == 700
     assert snapshots[0].ask_size == 300
     assert snapshots[0].volume_ratio == 1.6
+
+
+def test_scalp_replay_loads_raw_kraken_futures_ws_messages():
+    snapshots = snapshots_from_rows(
+        [
+            {
+                "feed": "book_snapshot",
+                "product_id": "PF_LINKUSD",
+                "timestamp": 1786988700000,
+                "bids": [{"price": "10", "qty": "700"}],
+                "asks": [{"price": "10.01", "qty": "300"}],
+            },
+            {
+                "feed": "book",
+                "product_id": "PF_LINKUSD",
+                "timestamp": 1786988701000,
+                "side": "buy",
+                "price": "10.02",
+                "qty": "900",
+            },
+            {
+                "feed": "ticker_lite",
+                "product_id": "PF_LINKUSD",
+                "timestamp": 1786988702000,
+                "bid": "10.02",
+                "ask": "10.04",
+                "volume": "100",
+            },
+            {
+                "feed": "ticker_lite",
+                "product_id": "PF_LINKUSD",
+                "timestamp": 1786988703000,
+                "bid": "10.03",
+                "ask": "10.04",
+                "volume": "160",
+            },
+        ]
+    )
+
+    assert len(snapshots) == 4
+    assert snapshots[0].bid == 10
+    assert snapshots[0].ask == 10.01
+    assert snapshots[1].bid == 10.02
+    assert snapshots[-1].timestamp.isoformat() == "2026-08-17T17:45:03+00:00"
+    assert snapshots[-1].volume_ratio == 1.6
 
 
 def test_scalp_replay_batch_summarizes_multiple_snapshot_files(tmp_path):

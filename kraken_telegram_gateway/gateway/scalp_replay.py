@@ -7,6 +7,7 @@ from typing import Any
 
 from sqlmodel import Session, SQLModel, create_engine
 
+from kraken_telegram_gateway.gateway.market_data import KrakenFuturesBook
 from kraken_telegram_gateway.gateway.scalping import MarketSnapshot
 from kraken_telegram_gateway.gateway.service import (
     get_scalp_session_report,
@@ -21,7 +22,22 @@ def load_market_snapshots(path: Path) -> list[MarketSnapshot]:
             rows = list(csv.DictReader(handle))
     else:
         rows = _load_json_rows(path)
-    return [snapshot_from_mapping(row) for row in rows]
+    return snapshots_from_rows(rows)
+
+
+def snapshots_from_rows(rows: list[dict[str, Any]]) -> list[MarketSnapshot]:
+    snapshots: list[MarketSnapshot] = []
+    kraken_books: dict[str, KrakenFuturesBook] = {}
+    for row in rows:
+        if _is_kraken_futures_ws_message(row):
+            product_id = str(row["product_id"])
+            book = kraken_books.setdefault(product_id, KrakenFuturesBook(product_id))
+            snapshot = book.apply(row)
+            if snapshot is not None:
+                snapshots.append(snapshot)
+            continue
+        snapshots.append(snapshot_from_mapping(row))
+    return snapshots
 
 
 def run_scalp_replay(command: str, snapshots: list[MarketSnapshot]) -> dict[str, Any]:
@@ -125,6 +141,10 @@ def _load_json_rows(path: Path) -> list[dict[str, Any]]:
             raise ValueError("JSON snapshot file must contain a list")
         return parsed
     return [json.loads(line) for line in text.splitlines() if line.strip()]
+
+
+def _is_kraken_futures_ws_message(row: dict[str, Any]) -> bool:
+    return row.get("feed") in {"book_snapshot", "book", "ticker_lite"} and bool(row.get("product_id"))
 
 
 def _parse_timestamp(value: Any) -> datetime:
