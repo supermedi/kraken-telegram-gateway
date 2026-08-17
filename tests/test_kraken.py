@@ -460,7 +460,7 @@ def test_live_entry_submission_posts_signed_order_after_metadata_payload_is_prep
             return None
 
         def json(self):
-            return {"result": "success", "sendStatus": {"order_id": "OID-123"}}
+            return {"result": "success", "sendStatus": {"order_id": "OID-123", "status": "placed"}}
 
     def fake_request(method, url, *, headers, content, timeout):
         calls.append((method, url, headers, content, timeout))
@@ -521,7 +521,7 @@ def test_live_target_submission_posts_reduce_only_order_after_metadata_payload_i
             return None
 
         def json(self):
-            return {"result": "success", "sendStatus": {"order_id": "OID-456"}}
+            return {"result": "success", "sendStatus": {"order_id": "OID-456", "status": "placed"}}
 
     def fake_request(method, url, *, headers, content, timeout):
         calls.append((method, url, headers, content, timeout))
@@ -619,4 +619,56 @@ def test_live_entry_submission_is_blocked_when_kraken_rejects_order(tmp_path, mo
     assert result == {
         "mode": "blocked",
         "message": "Live Kraken submission failed: orderRejected",
+    }
+
+
+def test_live_entry_submission_is_blocked_when_send_status_rejects_order(tmp_path, monkeypatch):
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "result": "success",
+                "sendStatus": {
+                    "status": "orderRejected",
+                    "orderEvents": [{"type": "REJECT"}],
+                },
+            }
+
+    monkeypatch.setattr(
+        "kraken_telegram_gateway.gateway.kraken.httpx.request",
+        lambda method, url, *, headers, content, timeout: FakeResponse(),
+    )
+    metadata_file = tmp_path / "instruments.json"
+    metadata_file.write_text(
+        """
+        {
+          "instruments": [
+            {
+              "symbol": "PF_XBTUSD",
+              "contract_value_usdc": "5",
+              "size_step": "0.5",
+              "min_size": "1"
+            }
+          ]
+        }
+        """,
+        encoding="utf-8",
+    )
+    client = KrakenClient(
+        Settings(
+            dry_run=False,
+            live_trading_enabled=True,
+            kraken_api_key="public-key",
+            kraken_api_secret="dGVzdC1zZWNyZXQ=",
+            kraken_instrument_metadata_path=str(metadata_file),
+        )
+    )
+
+    result = client.submit_entry_order(make_trade())
+
+    assert result == {
+        "mode": "blocked",
+        "message": "Live Kraken submission failed: sendStatus.status=orderRejected; orderEvents=REJECT",
     }

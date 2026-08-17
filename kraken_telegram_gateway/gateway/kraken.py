@@ -249,7 +249,7 @@ class KrakenClient:
             raise KrakenOrderSubmissionError("response payload is not an object")
         if str(response_payload.get("result", "success")).lower() != "success":
             raise KrakenOrderSubmissionError(str(response_payload.get("error") or response_payload))
-        return extract_order_id(response_payload)
+        return extract_placed_order_id(response_payload)
 
     def fetch_account_balances(self) -> list[AccountBalance]:
         request = self.build_account_request()
@@ -436,26 +436,60 @@ def format_account_error_debug_detail(
     )
 
 
-def extract_order_id(payload: Mapping[str, object]) -> str:
-    for key in ("order_id", "orderId", "order_id_2", "cliOrdId"):
-        value = payload.get(key)
-        if value:
-            return str(value)
-
+def extract_placed_order_id(payload: Mapping[str, object]) -> str:
     send_status = payload.get("sendStatus")
     if isinstance(send_status, Mapping):
-        for key in ("order_id", "orderId", "order_id_2", "cliOrdId"):
-            value = send_status.get(key)
-            if value:
-                return str(value)
         status = send_status.get("status")
-        if status:
-            return str(status)
+        if str(status).lower() != "placed":
+            raise KrakenOrderSubmissionError(format_send_order_rejection(send_status))
+        order_id = extract_order_id(send_status)
+        if order_id:
+            return order_id
+
+    order_id = extract_order_id(payload)
+    if order_id:
+        return order_id
 
     server_time = payload.get("serverTime")
     if server_time:
         return f"kraken-live-{server_time}"
     return "kraken-live-submitted"
+
+
+def extract_order_id(payload: Mapping[str, object]) -> str | None:
+    for key in ("order_id", "orderId", "order_id_2", "cliOrdId"):
+        value = payload.get(key)
+        if value:
+            return str(value)
+
+    order_events = payload.get("orderEvents")
+    if isinstance(order_events, list):
+        for event in order_events:
+            if isinstance(event, Mapping):
+                order = event.get("order")
+                if isinstance(order, Mapping):
+                    value = order.get("orderId")
+                    if value:
+                        return str(value)
+    return None
+
+
+def format_send_order_rejection(send_status: Mapping[str, object]) -> str:
+    status = send_status.get("status") or "unknown"
+    reason = send_status.get("error") or send_status.get("reason") or send_status.get("message")
+    details = [f"sendStatus.status={status}"]
+    if reason:
+        details.append(f"reason={reason}")
+    order_events = send_status.get("orderEvents")
+    if isinstance(order_events, list):
+        event_types = [
+            str(event.get("type"))
+            for event in order_events
+            if isinstance(event, Mapping) and event.get("type")
+        ]
+        if event_types:
+            details.append(f"orderEvents={','.join(event_types)}")
+    return "; ".join(details)
 
 
 def calculate_contract_size(amount_usdc: Decimal, leverage: Decimal, instrument: InstrumentMetadata) -> Decimal:

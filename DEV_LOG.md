@@ -46,6 +46,16 @@ The hourly isolated cron must use this file as the handoff point between runs:
 
 ## Cycle Log
 
+### 2026-08-17 00:33 UTC - Respect Kraken Send Status Rejections
+
+- Fixed live order submission handling so Kraken responses with `result=success` but `sendStatus.status` other than `placed` are treated as rejected/blocked.
+- Added rejection detail from `sendStatus.status`, `reason`/`error`/`message`, and `orderEvents` into the Telegram/API failure message.
+- Updated live submission tests to require documented `sendStatus.status=placed` for successful order placement.
+
+Files changed: `kraken_telegram_gateway/gateway/kraken.py`, `tests/test_kraken.py`, `DEV_LOG.md`.
+
+Tests: `python3 -m pytest tests/test_kraken.py -q` -> 21 passed. `python3 -m pytest -q` -> 98 passed, 1 Starlette/TestClient deprecation warning.
+
 ### 2026-08-17 00:28 UTC - Separate Telegram Action Blocks
 
 - Split the Telegram preview copy helper into two separate `bash` blocks: one for `/confirm <trade_id>` and one for `/cancel <trade_id>`.
