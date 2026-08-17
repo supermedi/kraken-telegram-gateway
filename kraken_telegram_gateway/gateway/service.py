@@ -248,6 +248,12 @@ def submit_ready_targets(trade_id: str, session: Session, settings: Settings) ->
             message = f"Live: {submitted_count} target(s) reduce-only envoyees a Kraken."
         else:
             message = f"Dry-run: {submitted_count} target(s) reduce-only marquees soumises; aucun ordre Kraken envoye."
+        if blocked_messages:
+            blocked_summary = (
+                f"{len(blocked_messages)} target(s) bloquees; premiere erreur: {blocked_messages[0]}"
+            )
+            message = f"{message} {blocked_summary}"
+            session.add(AuditEvent(trade_id=trade.id, event_type="targets_blocked", message=blocked_summary))
         session.add(AuditEvent(trade_id=trade.id, event_type="targets_submitted", message=message))
     else:
         message = blocked_messages[0] if blocked_messages else "Aucune target reduce-only soumise."

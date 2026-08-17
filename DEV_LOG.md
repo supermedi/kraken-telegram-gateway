@@ -16,13 +16,13 @@ The hourly isolated cron must use this file as the handoff point between runs:
 - Project: Kraken Futures <-> Telegram trading gateway.
 - Runtime: Python/FastAPI with SQLite persistence.
 - Safety mode: dry-run only by default; live Kraken execution is approved only when the existing runtime gates are deliberately opened with `LIVE_TRADING_ENABLED=true`, `DRY_RUN=false`, and valid Kraken Futures credentials.
-- Telegram: webhook endpoint, command dispatcher, user allowlist, webhook secret, pause/resume, retry idempotency, trade previews plus a separate trade-id-only copy message, `/balance`/`/solde` read-only Kraken Futures account balance lookup with `account`/`currency` plus `asset`/`devise` currency aliases, idempotent `/cancel <trade_id>` with live Kraken order cancellation when an attached live order exists, `/status <trade_id>` trade visibility, `/orders <trade_id>` compact order visibility with case-insensitive `status`/`role` filters, `/trades` recent-list visibility with `limit`/`offset`/case-insensitive `status`/`pair`/`side` filters, `/audit` safety-event diagnostics with case-insensitive `event_type`/`type`/`event` filters, `/audit_types` and `/audit-types` event-type counters, idempotent `/entry_filled <trade_id>`/`/entry-filled <trade_id>` local lifecycle tracking, and idempotent `/submit_targets <trade_id>`/`/submit-targets <trade_id>` dry-run target submission are implemented.
+- Telegram: webhook endpoint, command dispatcher, user allowlist, webhook secret, pause/resume, retry idempotency, trade previews plus a separate trade-id-only copy message, `/balance`/`/solde` read-only Kraken Futures account balance lookup with `account`/`currency` plus `asset`/`devise` currency aliases, idempotent `/cancel <trade_id>` with live Kraken order cancellation when an attached live order exists, `/status <trade_id>` trade visibility, `/orders <trade_id>` compact order visibility with case-insensitive `status`/`role` filters, `/trades` recent-list visibility with `limit`/`offset`/case-insensitive `status`/`pair`/`side` filters, `/audit` safety-event diagnostics with case-insensitive `event_type`/`type`/`event` filters, `/audit_types` and `/audit-types` event-type counters, idempotent `/entry_filled <trade_id>`/`/entry-filled <trade_id>` local lifecycle tracking, and idempotent `/submit_targets <trade_id>`/`/submit-targets <trade_id>` dry-run target submission with partial-block diagnostics are implemented.
 - Risk policy: stop loss is optional by default with a warning; `REQUIRE_STOP_LOSS_FOR_CONFIRMATION=true` rejects confirmation of no-stop trades without touching planned orders or Kraken.
-- Trading model: trade previews are persisted with planned entry orders and reduce-only target exit orders; repeated cancellation retries are no-ops that avoid duplicate audit events; confirmed entries can be marked `filled`, which moves target exits to `ready_to_submit`; ready targets can then be marked `dry_run_submitted` with local external ids and no Kraken network submission; repeated target submission retries are no-ops that preserve existing ids and avoid duplicate audit events; `/trades` lists recent trades with `limit`, `offset`, `status`, `pair`, and `side` filters; `/trades/{trade_id}` returns the trade plus attached orders; `/trades/{trade_id}/orders` returns attached orders with optional `status` and `role` filters; `/audit` lists recent audit events with `trade_id` and `event_type` filters; `/audit/event-types` returns local audit event-type counters.
+- Trading model: trade previews are persisted with planned entry orders and reduce-only target exit orders; repeated cancellation retries are no-ops that avoid duplicate audit events; confirmed entries can be marked `filled`, which moves target exits to `ready_to_submit`; ready targets can then be marked `dry_run_submitted` with local external ids and no Kraken network submission; mixed target submission results report submitted and blocked counts, plus a `targets_blocked` audit event; repeated target submission retries are no-ops that preserve existing ids and avoid duplicate audit events; `/trades` lists recent trades with `limit`, `offset`, `status`, `pair`, and `side` filters; `/trades/{trade_id}` returns the trade plus attached orders; `/trades/{trade_id}/orders` returns attached orders with optional `status` and `role` filters; `/audit` lists recent audit events with `trade_id` and `event_type` filters; `/audit/event-types` returns local audit event-type counters.
 - Kraken Futures: authenticated REST signing, private request preparation, read-only `/derivatives/api/v3/accounts` balance lookup exposed through Telegram `/balance`/`/solde` and API `GET /balance` with optional filters, a local-first/public-fallback instrument metadata provider, a metadata cache validator CLI, safe entry/target limit-order payload boundaries, live order POST submission to `/derivatives/api/v3/sendorder`, and live order cancellation via `/derivatives/api/v3/cancelorder` are implemented behind the existing live gates.
 - Deployment: Dockerfile, Docker Compose, GHCR publish workflow, final public image name `ghcr.io/supermedi/kraken-telegram-gateway:latest`, and deployment documentation are in place; runtime secrets stay in local `.env`.
 - GitHub: dedicated public repository created and initial code pushed to `https://github.com/supermedi/kraken-telegram-gateway`.
-- Verification baseline: `python3 -m pytest -q` was last reported passing with 93 tests on 2026-08-16.
+- Verification baseline: `python3 -m pytest -q` was last reported passing with 107 tests on 2026-08-17.
 
 ## Guardrails
 
@@ -41,10 +41,23 @@ The hourly isolated cron must use this file as the handoff point between runs:
 1. Validate Docker build in the target VPS environment, then confirm GHCR pull/run health against `ghcr.io/supermedi/kraken-telegram-gateway:latest`.
 2. Validate Docker/GHCR deployment on the VPS with the public Kraken instrument metadata fallback enabled.
 3. Add Kraken account-event polling/webhook abstraction for real entry fill detection only after live integration is explicitly approved.
-4. Harden target-submission retry diagnostics further only if mixed blocked/submitted live-integration states need clearer operator feedback.
+4. Monitor target-submission partial-block diagnostics in live-gated testing and refine only if operator feedback remains unclear.
 5. Extend audit/balance/Telegram diagnostics only if operators need retention/export, balance freshness, richer webhook failure visibility, or additional mobile command ergonomics.
 
 ## Cycle Log
+
+### 2026-08-17 01:44 UTC - Target Partial-Block Diagnostics
+
+- Chose Next Queue item 4 because a local `service.py` change already started mixed submitted/blocked target diagnostics and matched the current project priorities.
+- Completed the behavior by documenting that partial target submission reports blocked counts and the first error while preserving successfully submitted target ids.
+- Added coverage for a mixed target set where one reduce-only target is submitted in dry-run and one malformed target remains blocked/ready, with separate `targets_submitted` and `targets_blocked` audit events.
+- Kept Kraken safety guardrails unchanged: no live-trading flag, dry-run default, credentials, or Kraken network-order path was changed.
+
+Files changed: `kraken_telegram_gateway/gateway/service.py`, `tests/test_telegram.py`, `README.md`, `DEV_LOG.md`.
+
+Tests: `python3 -m pytest tests/test_telegram.py::test_submit_targets_command_reports_partial_blocks_for_operator_diagnostics -q` -> 1 passed. `python3 -m compileall -q kraken_telegram_gateway` -> OK. `python3 -m pytest -q` -> 107 passed, 1 Starlette/TestClient deprecation warning.
+
+Commit local: `Add target partial-block diagnostics`.
 
 ### 2026-08-17 01:36 UTC - Send Trade ID Copy Message
 

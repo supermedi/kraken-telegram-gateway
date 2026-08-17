@@ -649,6 +649,70 @@ def test_submit_targets_command_retry_is_idempotent_for_mobile_operators():
     assert len(audits) == 1
 
 
+def test_submit_targets_command_reports_partial_blocks_for_operator_diagnostics():
+    settings = Settings(max_amount_usdc=100)
+    with make_session() as session:
+        trade = Trade(
+            id="trade-mixed-targets",
+            pair="PF_XBTUSD",
+            side="buy",
+            amount_usdc=100,
+            entry_type="limit",
+            entry_price=65000,
+            targets_json="[]",
+            leverage=2,
+            status="entry_filled",
+        )
+        good_target = TradeOrder(
+            id="target-good",
+            trade_id=trade.id,
+            role=OrderRole.TARGET_EXIT,
+            pair=trade.pair,
+            side="sell",
+            price=67000,
+            amount_usdc=50,
+            target_percent=50,
+            reduce_only=True,
+            status=OrderStatus.READY_TO_SUBMIT,
+        )
+        blocked_target = TradeOrder(
+            id="target-blocked",
+            trade_id=trade.id,
+            role=OrderRole.TARGET_EXIT,
+            pair=trade.pair,
+            side="sell",
+            price=69000,
+            amount_usdc=50,
+            target_percent=50,
+            reduce_only=False,
+            status=OrderStatus.READY_TO_SUBMIT,
+        )
+        session.add(trade)
+        session.add(good_target)
+        session.add(blocked_target)
+        session.commit()
+
+        reply = dispatch_telegram_text(f"/submit_targets {trade.id}", session, settings)
+        refreshed_good_target = session.get(TradeOrder, "target-good")
+        refreshed_blocked_target = session.get(TradeOrder, "target-blocked")
+        submitted_audit = session.exec(
+            select(AuditEvent).where(AuditEvent.trade_id == trade.id, AuditEvent.event_type == "targets_submitted")
+        ).one()
+        blocked_audit = session.exec(
+            select(AuditEvent).where(AuditEvent.trade_id == trade.id, AuditEvent.event_type == "targets_blocked")
+        ).one()
+
+    assert "Dry-run: 1 target(s) reduce-only" in reply
+    assert "1 target(s) bloquees" in reply
+    assert "target exit order must be reduce-only" in reply
+    assert "Statut: entry_filled" in reply
+    assert refreshed_good_target.status == OrderStatus.DRY_RUN_SUBMITTED
+    assert refreshed_good_target.external_order_id == "dryrun-target-target-good"
+    assert refreshed_blocked_target.status == OrderStatus.READY_TO_SUBMIT
+    assert "1 target(s) bloquees" in submitted_audit.message
+    assert "target exit order must be reduce-only" in blocked_audit.message
+
+
 def test_submit_targets_command_rejects_before_entry_fill():
     settings = Settings(max_amount_usdc=100)
     with make_session() as session:
