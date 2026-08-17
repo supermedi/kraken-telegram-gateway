@@ -354,6 +354,34 @@ def test_scalp_replay_loads_raw_kraken_futures_ws_messages():
     assert snapshots[-1].volume_ratio == 1.6
 
 
+def test_scalp_replay_loads_nested_order_book_exports():
+    snapshots = snapshots_from_rows(
+        [
+            {
+                "timestamp": "2026-08-17T13:45:00Z",
+                "bids": [["9.99", "100"], ["10.00", "700"]],
+                "asks": [["10.02", "400"], ["10.01", "300"]],
+                "volumeRatio": "1.6",
+            },
+            {
+                "E": 1786988701000,
+                "b": [["10.02", "900"], ["10.01", "200"]],
+                "a": [["10.04", "350"], ["10.05", "500"]],
+            },
+        ]
+    )
+
+    assert len(snapshots) == 2
+    assert snapshots[0].bid == 10
+    assert snapshots[0].ask == 10.01
+    assert snapshots[0].bid_size == 700
+    assert snapshots[0].ask_size == 300
+    assert snapshots[0].volume_ratio == 1.6
+    assert snapshots[1].timestamp.isoformat() == "2026-08-17T17:45:01+00:00"
+    assert snapshots[1].bid == 10.02
+    assert snapshots[1].ask == 10.04
+
+
 def test_scalp_replay_batch_summarizes_multiple_snapshot_files(tmp_path):
     profitable_path = tmp_path / "profitable.jsonl"
     profitable_path.write_text(

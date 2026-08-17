@@ -110,9 +110,12 @@ def summarize_scalp_replays(runs: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def snapshot_from_mapping(row: dict[str, Any]) -> MarketSnapshot:
-    timestamp = _first_value(row, ["timestamp", "time", "created_at", "datetime", "date"])
+    timestamp = _first_value(row, ["timestamp", "time", "created_at", "datetime", "date", "event_time", "eventTime", "E"])
     if timestamp is None:
         raise ValueError("snapshot is missing timestamp")
+    book_snapshot = _snapshot_from_order_book_mapping(row, timestamp)
+    if book_snapshot is not None:
+        return book_snapshot
     return MarketSnapshot(
         timestamp=_parse_timestamp(timestamp),
         bid=_required_float(row, "bid", aliases=["best_bid", "bid_price", "bidPrice"]),
@@ -147,12 +150,76 @@ def _is_kraken_futures_ws_message(row: dict[str, Any]) -> bool:
     return row.get("feed") in {"book_snapshot", "book", "ticker_lite"} and bool(row.get("product_id"))
 
 
+def _snapshot_from_order_book_mapping(row: dict[str, Any], timestamp: Any) -> MarketSnapshot | None:
+    bids = _first_value(row, ["bids", "bid_levels", "bidLevels", "b"])
+    asks = _first_value(row, ["asks", "ask_levels", "askLevels", "a"])
+    if bids is None or asks is None:
+        return None
+
+    best_bid = _best_book_level(bids, side="bid")
+    best_ask = _best_book_level(asks, side="ask")
+    if best_bid is None or best_ask is None:
+        raise ValueError("order book snapshot is missing usable bid/ask levels")
+
+    return MarketSnapshot(
+        timestamp=_parse_timestamp(timestamp),
+        bid=best_bid[0],
+        ask=best_ask[0],
+        bid_size=best_bid[1],
+        ask_size=best_ask[1],
+        volume_ratio=_optional_float(row, ["volume_ratio", "volumeRatio", "volume_ratio_1m"], default=1),
+    )
+
+
+def _best_book_level(raw_levels: Any, *, side: str) -> tuple[float, float] | None:
+    levels = _coerce_book_levels(raw_levels)
+    parsed_levels = [_parse_book_level(level) for level in levels]
+    usable_levels = [level for level in parsed_levels if level is not None and level[0] > 0 and level[1] > 0]
+    if not usable_levels:
+        return None
+    return max(usable_levels, key=lambda level: level[0]) if side == "bid" else min(usable_levels, key=lambda level: level[0])
+
+
+def _coerce_book_levels(raw_levels: Any) -> list[Any]:
+    if isinstance(raw_levels, str):
+        text = raw_levels.strip()
+        if not text:
+            return []
+        parsed = json.loads(text)
+        return _coerce_book_levels(parsed)
+    if isinstance(raw_levels, dict):
+        return [{"price": price, "qty": qty} for price, qty in raw_levels.items()]
+    if isinstance(raw_levels, list):
+        return raw_levels
+    return []
+
+
+def _parse_book_level(level: Any) -> tuple[float, float] | None:
+    if isinstance(level, dict):
+        price = _first_value(level, ["price", "px", "rate", "0"])
+        qty = _first_value(level, ["qty", "quantity", "size", "amount", "volume", "1"])
+    elif isinstance(level, (list, tuple)) and len(level) >= 2:
+        price = level[0]
+        qty = level[1]
+    else:
+        return None
+    if price is None or qty is None:
+        return None
+    return float(price), float(qty)
+
+
 def _parse_timestamp(value: Any) -> datetime:
     if isinstance(value, (int, float)):
-        return datetime.fromtimestamp(float(value), timezone.utc)
+        seconds = float(value)
+        if abs(seconds) > 10_000_000_000:
+            seconds = seconds / 1000
+        return datetime.fromtimestamp(seconds, timezone.utc)
     text = str(value).strip()
     if text.isdigit():
-        return datetime.fromtimestamp(float(text), timezone.utc)
+        seconds = float(text)
+        if abs(seconds) > 10_000_000_000:
+            seconds = seconds / 1000
+        return datetime.fromtimestamp(seconds, timezone.utc)
     if text.endswith("Z"):
         text = f"{text[:-1]}+00:00"
     parsed = datetime.fromisoformat(text)
