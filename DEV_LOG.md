@@ -23,8 +23,8 @@ The hourly isolated cron must use this file as the handoff point between runs:
 - Deployment: Dockerfile, Docker Compose, GHCR publish workflow, final public image name `ghcr.io/supermedi/kraken-telegram-gateway:latest`, and deployment documentation are in place; runtime secrets stay in local `.env`.
 - Repository hygiene: `.gitignore` and `.dockerignore` explicitly exclude private OpenClaw workspace files, local memory/media, local env files, caches, and SQLite databases.
 - GitHub: dedicated public repository created and initial code pushed to `https://github.com/supermedi/kraken-telegram-gateway`.
-- Verification baseline: `python3 -m pytest -q` was last reported passing with 134 tests on 2026-08-17.
-- Scalping mode: V1 foundation implemented as a separate paper-first session mode with persistent `ScalpSession`/`ScalpTrade`/`ScalpSignal` tables, `/scalp_start`, `/scalp_status`, `/scalp_stop`, `/scalp_report`, `/scalp_tick_kraken`, API endpoints including `GET /scalp/{session_id}/report`, multi-minute `max_hold`, synthetic market-data runner, injectable active-session scheduler, Kraken Futures public WebSocket snapshot collection, opt-in FastAPI background loop, offline deterministic replay CLI for one or more JSON/JSONL/CSV snapshot files, common historical book export aliases, nested order-book export levels such as `bids`/`asks` and Binance `b`/`a`, raw public Kraken Futures WebSocket book/ticker message replay, multi-file replay summaries, and paper metrics for winrate, gross/net PnL, estimated fees, max drawdown, rejected signals, close reasons, and stop reason. Experimental `mode=live` can submit one Kraken limit entry per signal only when `SCALP_LIVE_ENABLED=true`, existing live gates are open, the pair is allowed, and amount is under `SCALP_LIVE_MAX_AMOUNT_USDC`; automatic live exits and fill tracking are not implemented yet.
+- Verification baseline: `python3 -m pytest -q` was last reported passing with 136 tests on 2026-08-17.
+- Scalping mode: V1 foundation implemented as a separate paper-first session mode with persistent `ScalpSession`/`ScalpTrade`/`ScalpSignal` tables, `/scalp_start`, `/scalp_status`, `/scalp_stop`, `/scalp_report`, `/scalp_tick_kraken`, API endpoints including `GET /scalp/{session_id}/report`, multi-minute `max_hold`, synthetic market-data runner, injectable active-session scheduler, Kraken Futures public WebSocket snapshot collection, opt-in FastAPI background loop, offline deterministic replay CLI for one or more JSON/JSONL/CSV snapshot files, common historical book export aliases, nested order-book export levels such as `bids`/`asks` and Binance `b`/`a`, OHLCV/kline replay inputs converted into synthetic paper-only top-of-book snapshots, raw public Kraken Futures WebSocket book/ticker message replay, multi-file replay summaries, and paper metrics for winrate, gross/net PnL, estimated fees, max drawdown, rejected signals, close reasons, and stop reason. Experimental `mode=live` can submit one Kraken limit entry per signal only when `SCALP_LIVE_ENABLED=true`, existing live gates are open, the pair is allowed, and amount is under `SCALP_LIVE_MAX_AMOUNT_USDC`; automatic live exits and fill tracking are not implemented yet.
 
 ## Guardrails
 
@@ -42,12 +42,27 @@ The hourly isolated cron must use this file as the handoff point between runs:
 
 1. Validate Docker build in the target VPS environment, then confirm GHCR pull/run health against `ghcr.io/supermedi/kraken-telegram-gateway:latest`.
 2. Validate Docker/GHCR deployment on the VPS with the public Kraken instrument metadata fallback enabled.
-3. Add additional exchange/download-specific historical-data adapters beyond raw Kraken WebSocket exports and nested order-book rows if a real export format still fails replay loading.
+3. Add additional exchange/download-specific historical-data adapters beyond raw Kraken WebSocket exports, nested order-book rows, and OHLCV/kline rows if a real export format still fails replay loading.
 4. Add Kraken account-event polling/webhook abstraction for real scalp/manual entry fill detection before automatic live exits.
 5. Monitor target-submission partial-block diagnostics in live-gated testing and refine only if operator feedback remains unclear.
 6. Extend audit/balance/Telegram diagnostics only if operators need retention/export, balance freshness, richer webhook failure visibility, or additional mobile command ergonomics.
 
 ## Cycle Log
+
+### 2026-08-17 20:49 UTC - OHLCV Scalp Replay Inputs
+
+- Chose Next Queue item 3 and added another historical-data adapter slice for coarse paper validation from common candle exports.
+- Extended `kraken-scalp-replay` row loading to accept CCXT-style OHLCV arrays `[timestamp, open, high, low, close, volume]`, OHLCV/kline mappings, and nested Binance-style `k` payloads.
+- OHLCV/kline rows are converted into synthetic paper-only top-of-book snapshots around the close price with optional `spread_bps`, optional `volumeRatio`, and taker-buy volume aliases for imbalance when available.
+- Preserved existing canonical bid/ask rows, nested order-book rows, and raw Kraken Futures WebSocket replay handling.
+- Checked the top Docker/VPS validation item again locally, but Docker is not installed in this cron environment; VPS/GHCR validation remains pending.
+- Kept Kraken safety guardrails unchanged: no live-trading flag, dry-run default, credentials, Kraken network-order path, or live execution behavior was changed.
+
+Files changed: `kraken_telegram_gateway/gateway/scalp_replay.py`, `tests/test_scalping.py`, `README.md`, `SCALPING_MODE.md`, `DEV_LOG.md`.
+
+Tests: `python3 -m pytest tests/test_scalping.py -q` -> 14 passed. `python3 -m compileall -q kraken_telegram_gateway` -> OK. `python3 -m pytest -q` -> 136 passed, 1 known Starlette warning. `docker version` -> unavailable (`docker: command not found`).
+
+Commit local: `Accept OHLCV scalp replay inputs` (hash final reported in the cycle report).
 
 ### 2026-08-17 19:44 UTC - Private Workspace Ignore Guardrails
 

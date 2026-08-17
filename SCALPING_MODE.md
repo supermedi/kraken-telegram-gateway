@@ -132,7 +132,7 @@ Implemented:
 - Injectable active-session scheduler plus manual API ticks.
 - Kraken Futures public WebSocket adapter for book/ticker_lite snapshots feeding paper sessions.
 - Opt-in FastAPI background loop for active paper sessions via `SCALP_KRAKEN_SCHEDULER_ENABLED=true`.
-- Offline deterministic replay CLI `kraken-scalp-replay` for one or more JSON, JSONL, or CSV snapshot files, including common historical-book field aliases such as `best_bid`, `best_ask`, `bid_qty`, `ask_qty`, and `volumeRatio`, nested order-book exports such as `bids`/`asks` or Binance `b`/`a` levels, plus raw public Kraken Futures WebSocket `book_snapshot`, `book`, and `ticker_lite` JSON/JSONL messages. It runs paper sessions in an in-memory SQLite database and emits either a single-session JSON report or a multi-replay summary without contacting Kraken.
+- Offline deterministic replay CLI `kraken-scalp-replay` for one or more JSON, JSONL, or CSV snapshot files, including common historical-book field aliases such as `best_bid`, `best_ask`, `bid_qty`, `ask_qty`, and `volumeRatio`, nested order-book exports such as `bids`/`asks` or Binance `b`/`a` levels, OHLCV/kline arrays or mappings converted into synthetic paper-only top-of-book snapshots, plus raw public Kraken Futures WebSocket `book_snapshot`, `book`, and `ticker_lite` JSON/JSONL messages. It runs paper sessions in an in-memory SQLite database and emits either a single-session JSON report or a multi-replay summary without contacting Kraken.
 - Experimental live entry submission for `mode=live` sessions: a passing signal submits one Kraken Futures limit entry order and records the external order id.
 
 Not implemented yet:
@@ -154,8 +154,9 @@ Not implemented yet:
 9. Done: accept common historical book export aliases in replay inputs.
 10. Done: accept raw public Kraken Futures WebSocket book/ticker messages in replay inputs.
 11. Done: accept nested order-book export levels such as CCXT-style `bids`/`asks` and Binance `b`/`a` rows.
-12. Done: add a separate `SCALP_LIVE_ENABLED=true` gate for live entry orders.
-13. Add Kraken account-event polling/webhook tracking before any automatic live exits.
+12. Done: accept OHLCV/kline exports as synthetic paper-only snapshots for coarse replay validation.
+13. Done: add a separate `SCALP_LIVE_ENABLED=true` gate for live entry orders.
+14. Add Kraken account-event polling/webhook tracking before any automatic live exits.
 
 ## Safety Notes
 

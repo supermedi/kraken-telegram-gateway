@@ -25,19 +25,29 @@ def load_market_snapshots(path: Path) -> list[MarketSnapshot]:
     return snapshots_from_rows(rows)
 
 
-def snapshots_from_rows(rows: list[dict[str, Any]]) -> list[MarketSnapshot]:
+def snapshots_from_rows(rows: list[Any]) -> list[MarketSnapshot]:
     snapshots: list[MarketSnapshot] = []
     kraken_books: dict[str, KrakenFuturesBook] = {}
     for row in rows:
-        if _is_kraken_futures_ws_message(row):
+        if isinstance(row, dict) and _is_kraken_futures_ws_message(row):
             product_id = str(row["product_id"])
             book = kraken_books.setdefault(product_id, KrakenFuturesBook(product_id))
             snapshot = book.apply(row)
             if snapshot is not None:
                 snapshots.append(snapshot)
             continue
-        snapshots.append(snapshot_from_mapping(row))
+        snapshots.append(snapshot_from_row(row))
     return snapshots
+
+
+def snapshot_from_row(row: Any) -> MarketSnapshot:
+    if isinstance(row, dict):
+        if isinstance(row.get("k"), dict):
+            return snapshot_from_mapping(row["k"])
+        return snapshot_from_mapping(row)
+    if isinstance(row, (list, tuple)):
+        return snapshot_from_ohlcv_sequence(row)
+    raise ValueError("snapshot row must be an object or OHLCV array")
 
 
 def run_scalp_replay(command: str, snapshots: list[MarketSnapshot]) -> dict[str, Any]:
@@ -110,12 +120,18 @@ def summarize_scalp_replays(runs: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def snapshot_from_mapping(row: dict[str, Any]) -> MarketSnapshot:
-    timestamp = _first_value(row, ["timestamp", "time", "created_at", "datetime", "date", "event_time", "eventTime", "E"])
+    timestamp = _first_value(
+        row,
+        ["timestamp", "time", "created_at", "datetime", "date", "event_time", "eventTime", "open_time", "openTime", "E", "t"],
+    )
     if timestamp is None:
         raise ValueError("snapshot is missing timestamp")
     book_snapshot = _snapshot_from_order_book_mapping(row, timestamp)
     if book_snapshot is not None:
         return book_snapshot
+    ohlcv_snapshot = _snapshot_from_ohlcv_mapping(row, timestamp)
+    if ohlcv_snapshot is not None:
+        return ohlcv_snapshot
     return MarketSnapshot(
         timestamp=_parse_timestamp(timestamp),
         bid=_required_float(row, "bid", aliases=["best_bid", "bid_price", "bidPrice"]),
@@ -134,7 +150,20 @@ def snapshot_from_mapping(row: dict[str, Any]) -> MarketSnapshot:
     )
 
 
-def _load_json_rows(path: Path) -> list[dict[str, Any]]:
+def snapshot_from_ohlcv_sequence(row: list[Any] | tuple[Any, ...]) -> MarketSnapshot:
+    if len(row) < 6:
+        raise ValueError("OHLCV array snapshot must contain timestamp, open, high, low, close, and volume")
+    return _snapshot_from_ohlcv_values(
+        timestamp=row[0],
+        open_price=row[1],
+        high=row[2],
+        low=row[3],
+        close=row[4],
+        volume=row[5],
+    )
+
+
+def _load_json_rows(path: Path) -> list[Any]:
     text = path.read_text(encoding="utf-8").strip()
     if not text:
         return []
@@ -169,6 +198,111 @@ def _snapshot_from_order_book_mapping(row: dict[str, Any], timestamp: Any) -> Ma
         ask_size=best_ask[1],
         volume_ratio=_optional_float(row, ["volume_ratio", "volumeRatio", "volume_ratio_1m"], default=1),
     )
+
+
+def _snapshot_from_ohlcv_mapping(row: dict[str, Any], timestamp: Any) -> MarketSnapshot | None:
+    close = _first_value(row, ["close", "Close", "c"])
+    volume = _first_value(row, ["volume", "Volume", "vol", "base_volume", "baseVolume", "v"])
+    if close is None or volume is None:
+        return None
+    return _snapshot_from_ohlcv_values(
+        timestamp=timestamp,
+        open_price=_first_value(row, ["open", "Open", "o"]),
+        high=_first_value(row, ["high", "High", "h"]),
+        low=_first_value(row, ["low", "Low", "l"]),
+        close=close,
+        volume=volume,
+        spread_bps=_first_value(row, ["spread_bps", "spreadBps"]),
+        volume_ratio=_first_value(row, ["volume_ratio", "volumeRatio", "volume_ratio_1m"]),
+        buy_volume=_first_value(
+            row,
+            [
+                "buy_volume",
+                "buyVolume",
+                "taker_buy_volume",
+                "takerBuyVolume",
+                "taker_buy_base_asset_volume",
+                "takerBuyBaseAssetVolume",
+                "V",
+            ],
+        ),
+    )
+
+
+def _snapshot_from_ohlcv_values(
+    *,
+    timestamp: Any,
+    open_price: Any,
+    high: Any,
+    low: Any,
+    close: Any,
+    volume: Any,
+    spread_bps: Any = None,
+    volume_ratio: Any = None,
+    buy_volume: Any = None,
+) -> MarketSnapshot:
+    close_price = float(close)
+    if close_price <= 0:
+        raise ValueError("OHLCV snapshot close must be positive")
+    spread = close_price * (float(spread_bps) if spread_bps is not None else 5) / 10_000
+    total_volume = max(float(volume), 1.0)
+    bid_size, ask_size = _synthetic_ohlcv_sizes(
+        open_price=open_price,
+        high=high,
+        low=low,
+        close=close,
+        volume=total_volume,
+        buy_volume=buy_volume,
+    )
+    return MarketSnapshot(
+        timestamp=_parse_timestamp(timestamp),
+        bid=close_price - spread / 2,
+        ask=close_price + spread / 2,
+        bid_size=bid_size,
+        ask_size=ask_size,
+        volume_ratio=float(volume_ratio) if volume_ratio is not None else 1,
+    )
+
+
+def _synthetic_ohlcv_sizes(
+    *,
+    open_price: Any,
+    high: Any,
+    low: Any,
+    close: Any,
+    volume: float,
+    buy_volume: Any,
+) -> tuple[float, float]:
+    if buy_volume is not None:
+        bid_size = max(min(float(buy_volume), volume), 0.0)
+        ask_size = max(volume - bid_size, 0.0)
+        return _ensure_positive_sizes(bid_size, ask_size)
+
+    if open_price is None:
+        return volume / 2, volume / 2
+
+    open_value = float(open_price)
+    close_value = float(close)
+    if high is not None and low is not None and float(high) > float(low):
+        direction = (close_value - open_value) / (float(high) - float(low))
+    elif open_value > 0:
+        direction = (close_value - open_value) / open_value
+    else:
+        direction = 0.0
+    imbalance = max(min(direction, 0.8), -0.8)
+    bid_size = volume * (1 + imbalance) / 2
+    ask_size = volume - bid_size
+    return _ensure_positive_sizes(bid_size, ask_size)
+
+
+def _ensure_positive_sizes(bid_size: float, ask_size: float) -> tuple[float, float]:
+    if bid_size <= 0 and ask_size <= 0:
+        return 1.0, 1.0
+    if bid_size <= 0:
+        return 0.00000001, ask_size
+    if ask_size <= 0:
+        return bid_size, 0.00000001
+    return bid_size, ask_size
 
 
 def _best_book_level(raw_levels: Any, *, side: str) -> tuple[float, float] | None:

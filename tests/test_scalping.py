@@ -382,6 +382,48 @@ def test_scalp_replay_loads_nested_order_book_exports():
     assert snapshots[1].ask == 10.04
 
 
+def test_scalp_replay_loads_ccxt_ohlcv_array_exports():
+    snapshots = snapshots_from_rows(
+        [
+            [1786988700000, "10.00", "10.20", "9.95", "10.15", "1000"],
+        ]
+    )
+
+    assert len(snapshots) == 1
+    assert snapshots[0].timestamp.isoformat() == "2026-08-17T17:45:00+00:00"
+    assert snapshots[0].bid < 10.15
+    assert snapshots[0].ask > 10.15
+    assert snapshots[0].bid_size > snapshots[0].ask_size
+    assert snapshots[0].volume_ratio == 1
+
+
+def test_scalp_replay_loads_kline_mapping_with_taker_buy_volume():
+    snapshots = snapshots_from_rows(
+        [
+            {
+                "k": {
+                    "t": 1786988700000,
+                    "o": "10.00",
+                    "h": "10.20",
+                    "l": "9.95",
+                    "c": "10.15",
+                    "v": "1000",
+                    "V": "750",
+                    "volumeRatio": "1.4",
+                    "spreadBps": "2",
+                }
+            }
+        ]
+    )
+
+    assert len(snapshots) == 1
+    assert round(snapshots[0].bid, 6) == 10.148985
+    assert round(snapshots[0].ask, 6) == 10.151015
+    assert snapshots[0].bid_size == 750
+    assert snapshots[0].ask_size == 250
+    assert snapshots[0].volume_ratio == 1.4
+
+
 def test_scalp_replay_batch_summarizes_multiple_snapshot_files(tmp_path):
     profitable_path = tmp_path / "profitable.jsonl"
     profitable_path.write_text(
