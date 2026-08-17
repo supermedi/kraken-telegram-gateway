@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html
+import json
 import re
 
 import httpx
@@ -38,12 +39,12 @@ class TelegramUpdateError(ValueError):
     pass
 
 
-def handle_telegram_update(update: dict, session: Session, settings: Settings) -> str | None:
+def handle_telegram_update(update: dict, session: Session, settings: Settings) -> str | list[str] | None:
     update_id = update.get("update_id")
     if update_id is not None:
         processed = session.get(ProcessedTelegramUpdate, update_id)
         if processed is not None:
-            return processed.reply_text
+            return deserialize_processed_reply(processed.reply_text)
 
     message = update.get("message") or update.get("edited_message")
     if not message:
@@ -62,17 +63,27 @@ def handle_telegram_update(update: dict, session: Session, settings: Settings) -
     if not text:
         return "Commande vide."
 
-    reply = dispatch_telegram_text(text, session, settings)
+    reply = dispatch_telegram_messages(text, session, settings)
     if update_id is not None:
         session.add(
             ProcessedTelegramUpdate(
                 update_id=update_id,
                 chat_id=str(chat_id),
-                reply_text=reply,
+                reply_text=serialize_processed_reply(reply),
             )
         )
         session.commit()
     return reply
+
+
+def dispatch_telegram_messages(text: str, session: Session, settings: Settings) -> list[str]:
+    reply = dispatch_telegram_text(text, session, settings)
+    command = text.partition(" ")[0].split("@", 1)[0].lower()
+    if command == "/trade" or not command.startswith("/"):
+        trade_id = extract_trade_id_from_reply(reply)
+        if trade_id:
+            return [reply, trade_id]
+    return [reply]
 
 
 def dispatch_telegram_text(text: str, session: Session, settings: Settings) -> str:
@@ -186,6 +197,29 @@ def dispatch_telegram_text(text: str, session: Session, settings: Settings) -> s
 
 def format_trade_action_commands(trade_id: str) -> str:
     return f"```bash\n/confirm {trade_id}\n```\n\n```bash\n/cancel {trade_id}\n```"
+
+
+def extract_trade_id_from_reply(reply: str) -> str | None:
+    for line in reply.splitlines():
+        if line.startswith("Trade ID:"):
+            return line.split(":", 1)[1].strip()
+    return None
+
+
+def serialize_processed_reply(reply: list[str]) -> str:
+    return json.dumps(reply)
+
+
+def deserialize_processed_reply(reply_text: str | None) -> str | list[str] | None:
+    if reply_text is None:
+        return None
+    try:
+        decoded = json.loads(reply_text)
+    except json.JSONDecodeError:
+        return reply_text
+    if isinstance(decoded, list) and all(isinstance(item, str) for item in decoded):
+        return decoded
+    return reply_text
 
 
 def render_telegram_html(text: str) -> str:

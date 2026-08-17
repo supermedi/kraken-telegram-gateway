@@ -64,6 +64,31 @@ def test_trade_detail_api_includes_attached_orders():
     assert payload["orders"][1]["side"] == "buy"
 
 
+def test_telegram_webhook_sends_trade_id_as_separate_message(monkeypatch):
+    sent_messages = []
+
+    async def fake_send_telegram_message(chat_id, text, settings):
+        sent_messages.append((chat_id, text))
+
+    monkeypatch.setattr("kraken_telegram_gateway.gateway.app.send_telegram_message", fake_send_telegram_message)
+    update = {
+        "update_id": 42,
+        "message": {
+            "chat": {"id": 456},
+            "from": {"id": 123},
+            "text": "/trade pair=PF_XBTUSD side=buy amount_usdc=100 entry=limit:65000 t1=67000:100%",
+        },
+    }
+
+    with api_client() as client:
+        response = client.post("/telegram/webhook", json=update)
+
+    assert response.status_code == 200
+    assert len(sent_messages) == 2
+    trade_id = next(line.split(": ", 1)[1] for line in sent_messages[0][1].splitlines() if line.startswith("Trade ID:"))
+    assert sent_messages == [(456, sent_messages[0][1]), (456, trade_id)]
+
+
 def test_trade_orders_api_filters_by_status_and_role():
     with api_client() as client:
         preview_response = create_preview(

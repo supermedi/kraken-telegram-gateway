@@ -187,7 +187,9 @@ async def telegram_webhook(
         reply = handle_telegram_update(update, session, settings)
         chat_id = extract_chat_id(update)
         if reply and chat_id is not None:
-            await send_telegram_message(chat_id, reply, settings)
+            replies = reply if isinstance(reply, list) else [reply]
+            for message in replies:
+                await send_telegram_message(chat_id, message, settings)
     except TelegramUpdateError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

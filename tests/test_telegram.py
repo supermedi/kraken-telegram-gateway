@@ -12,6 +12,7 @@ from kraken_telegram_gateway.gateway.models import (
     TradeOrder,
 )
 from kraken_telegram_gateway.gateway.telegram import (
+    dispatch_telegram_messages,
     dispatch_telegram_text,
     handle_telegram_update,
     render_telegram_html,
@@ -40,6 +41,20 @@ def test_trade_message_creates_preview_and_confirm_hint():
     assert "```bash\n/confirm " in reply
     assert "```\n\n```bash\n/cancel " in reply
     assert reply.endswith("```")
+
+
+def test_trade_message_returns_copyable_trade_id_as_separate_message():
+    with make_session() as session:
+        replies = dispatch_telegram_messages(
+            "/trade pair=PF_XBTUSD side=buy amount_usdc=100 entry=limit:65000 t1=67000:100%",
+            session,
+            Settings(max_amount_usdc=100),
+        )
+
+    trade_id = next(line.split(": ", 1)[1] for line in replies[0].splitlines() if line.startswith("Trade ID:"))
+    assert replies == [replies[0], trade_id]
+    assert replies[1] == trade_id
+    assert "\n" not in replies[1]
 
 
 def test_render_telegram_html_preserves_code_block_without_markdown_underscores():
@@ -1082,3 +1097,6 @@ def test_telegram_update_id_is_stored_and_reused():
     assert first_reply == second_reply
     assert len(trades) == 1
     assert processed is not None
+    assert isinstance(first_reply, list)
+    assert len(first_reply) == 2
+    assert processed.reply_text.startswith("[")
