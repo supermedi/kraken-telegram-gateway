@@ -1,11 +1,13 @@
 import json
 from collections.abc import Callable
+from datetime import datetime, timezone
 
 from sqlalchemy import func
 from sqlmodel import Session, select
 
 from kraken_telegram_gateway.gateway.config import Settings
 from kraken_telegram_gateway.gateway.kraken import AccountBalance, KrakenClient
+from kraken_telegram_gateway.gateway.market_data import collect_kraken_futures_snapshots
 from kraken_telegram_gateway.gateway.models import (
     AuditEvent,
     BotState,
@@ -273,6 +275,37 @@ def run_active_scalp_paper_sessions(
         skipped=skipped,
         messages=messages,
     )
+
+
+def run_active_scalp_paper_sessions_from_kraken(
+    session: Session,
+    *,
+    snapshots_per_session: int = 1,
+    timeout_seconds: float = 10,
+) -> ScalpSchedulerResult:
+    def snapshot_provider(scalp_session: ScalpSession) -> list[MarketSnapshot]:
+        return asyncio_run_collect_snapshots(
+            scalp_session.pair,
+            limit=snapshots_per_session,
+            timeout_seconds=timeout_seconds,
+        )
+
+    return run_active_scalp_paper_sessions(session, snapshot_provider)
+
+
+def asyncio_run_collect_snapshots(product_id: str, *, limit: int, timeout_seconds: float) -> list[MarketSnapshot]:
+    import asyncio
+
+    try:
+        return asyncio.run(
+            collect_kraken_futures_snapshots(
+                product_id,
+                limit=limit,
+                timeout_seconds=timeout_seconds,
+            )
+        )
+    except Exception:
+        return []
 
 
 def confirm_trade(trade_id: str, session: Session, settings: Settings) -> ConfirmResult:
@@ -791,7 +824,7 @@ def _maybe_close_scalp_trade(
     gross_pnl = _scalp_gross_pnl(trade, exit_price)
     estimated_fees = _estimate_scalp_fees(trade)
     net_pnl = gross_pnl - estimated_fees
-    hold_seconds = (snapshot.timestamp - trade.opened_at).total_seconds()
+    hold_seconds = _seconds_between(trade.opened_at, snapshot.timestamp)
 
     close_reason = None
     if net_pnl >= scalp_session.min_net_pnl:
@@ -841,7 +874,17 @@ def _scalp_loss_count(session_id: str, session: Session) -> int:
 
 
 def _scalp_session_elapsed(scalp_session: ScalpSession, snapshot: MarketSnapshot) -> bool:
-    return (snapshot.timestamp - scalp_session.started_at).total_seconds() >= scalp_session.duration_seconds
+    return _seconds_between(scalp_session.started_at, snapshot.timestamp) >= scalp_session.duration_seconds
+
+
+def _seconds_between(start: datetime, end: datetime) -> float:
+    return (_as_utc_aware(end) - _as_utc_aware(start)).total_seconds()
+
+
+def _as_utc_aware(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 def _complete_scalp_session(scalp_session: ScalpSession, reason: str, session: Session) -> None:

@@ -1,4 +1,5 @@
 from contextlib import contextmanager
+from datetime import datetime
 from decimal import Decimal
 
 from fastapi.testclient import TestClient
@@ -9,6 +10,7 @@ from kraken_telegram_gateway.gateway.app import app
 from kraken_telegram_gateway.gateway.config import Settings, get_settings
 from kraken_telegram_gateway.gateway.db import get_session
 from kraken_telegram_gateway.gateway.kraken import AccountBalance
+from kraken_telegram_gateway.gateway.scalping import MarketSnapshot
 
 
 @contextmanager
@@ -241,6 +243,52 @@ def test_scalp_scheduler_tick_reports_active_sessions_without_market_data_provid
     assert scheduler_response.json()["processed"] == 0
     assert scheduler_response.json()["skipped"] == 1
     assert session_id in scheduler_response.json()["messages"][0]
+
+
+def test_scalp_scheduler_kraken_tick_uses_market_data_provider(monkeypatch):
+    async def fake_collect_kraken_futures_snapshots(product_id, *, limit, timeout_seconds):
+        assert product_id == "PF_LINKUSD"
+        assert limit == 2
+        assert timeout_seconds == 3
+        return [
+            MarketSnapshot(
+                datetime.fromisoformat("2026-08-17T00:00:01+00:00"),
+                bid=10,
+                ask=10.01,
+                bid_size=700,
+                ask_size=300,
+                volume_ratio=1.6,
+            ),
+            MarketSnapshot(
+                datetime.fromisoformat("2026-08-17T00:01:30+00:00"),
+                bid=10.08,
+                ask=10.09,
+                bid_size=500,
+                ask_size=500,
+                volume_ratio=1,
+            ),
+        ]
+
+    monkeypatch.setattr(
+        "kraken_telegram_gateway.gateway.service.collect_kraken_futures_snapshots",
+        fake_collect_kraken_futures_snapshots,
+    )
+
+    with api_client() as client:
+        client.post(
+            "/commands/scalp-start",
+            json={"text": "/scalp_start pair=PF_LINKUSD amount_usdc=100 leverage=2 duration=60m max_hold=5m min_pnl=1"},
+        )
+
+        scheduler_response = client.post(
+            "/scalp/scheduler/tick-kraken",
+            params={"snapshots_per_session": 2, "timeout_seconds": 3},
+        )
+
+    assert scheduler_response.status_code == 200
+    assert scheduler_response.json()["scanned"] == 1
+    assert scheduler_response.json()["processed"] == 1
+    assert scheduler_response.json()["skipped"] == 0
 
 
 def test_entry_filled_api_marks_entry_filled_and_targets_ready():

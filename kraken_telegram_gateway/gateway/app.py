@@ -35,6 +35,7 @@ from kraken_telegram_gateway.gateway.service import (
     list_audit_events,
     list_trades,
     mark_entry_filled,
+    run_active_scalp_paper_sessions_from_kraken,
     run_active_scalp_paper_sessions,
     start_scalp_session,
     stop_scalp_session,
@@ -105,6 +106,19 @@ def get_scalp_session(session_id: str, session: Session = Depends(get_session)) 
 @app.post("/scalp/scheduler/tick", response_model=ScalpSchedulerResult)
 def scalp_scheduler_tick(session: Session = Depends(get_session)) -> ScalpSchedulerResult:
     return run_active_scalp_paper_sessions(session, lambda _: [])
+
+
+@app.post("/scalp/scheduler/tick-kraken", response_model=ScalpSchedulerResult)
+def scalp_scheduler_kraken_tick(
+    snapshots_per_session: int = Query(default=1, ge=1, le=10),
+    timeout_seconds: float = Query(default=10, ge=1, le=60),
+    session: Session = Depends(get_session),
+) -> ScalpSchedulerResult:
+    return run_active_scalp_paper_sessions_from_kraken(
+        session,
+        snapshots_per_session=snapshots_per_session,
+        timeout_seconds=timeout_seconds,
+    )
 
 
 @app.post("/commands/trade", response_model=TradePreview)

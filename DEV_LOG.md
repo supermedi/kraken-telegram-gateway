@@ -23,7 +23,7 @@ The hourly isolated cron must use this file as the handoff point between runs:
 - Deployment: Dockerfile, Docker Compose, GHCR publish workflow, final public image name `ghcr.io/supermedi/kraken-telegram-gateway:latest`, and deployment documentation are in place; runtime secrets stay in local `.env`.
 - GitHub: dedicated public repository created and initial code pushed to `https://github.com/supermedi/kraken-telegram-gateway`.
 - Verification baseline: `python3 -m pytest -q` was last reported passing with 107 tests on 2026-08-17.
-- Scalping mode: V1 foundation implemented as a separate paper-only session mode with persistent `ScalpSession`/`ScalpTrade`/`ScalpSignal` tables, `/scalp_start`, `/scalp_status`, `/scalp_stop`, `/scalp_report`, API endpoints, multi-minute `max_hold`, synthetic market-data runner, injectable active-session scheduler, and net-PnL reporting. Kraken WebSocket automation remains queued before any live gate.
+- Scalping mode: V1 foundation implemented as a separate paper-only session mode with persistent `ScalpSession`/`ScalpTrade`/`ScalpSignal` tables, `/scalp_start`, `/scalp_status`, `/scalp_stop`, `/scalp_report`, API endpoints, multi-minute `max_hold`, synthetic market-data runner, injectable active-session scheduler, Kraken Futures public WebSocket snapshot collection, and net-PnL reporting. Automatic background looping and live execution remain queued behind paper validation and future explicit gates.
 
 ## Guardrails
 
@@ -41,8 +41,8 @@ The hourly isolated cron must use this file as the handoff point between runs:
 
 1. Validate Docker build in the target VPS environment, then confirm GHCR pull/run health against `ghcr.io/supermedi/kraken-telegram-gateway:latest`.
 2. Validate Docker/GHCR deployment on the VPS with the public Kraken instrument metadata fallback enabled.
-3. Add Kraken WebSocket market-data integration for scalping paper sessions.
-4. Wire the WebSocket snapshot provider into an actual periodic background loop for active paper sessions.
+3. Wire the Kraken WebSocket snapshot provider into an actual periodic background loop for active paper sessions.
+4. Add longer paper validation/replay workflows and reporting for winrate, PnL net, drawdown, fees, and stop reasons.
 5. Add Kraken account-event polling/webhook abstraction for real entry fill detection only after live integration is explicitly approved.
 6. Monitor target-submission partial-block diagnostics in live-gated testing and refine only if operator feedback remains unclear.
 7. Extend audit/balance/Telegram diagnostics only if operators need retention/export, balance freshness, richer webhook failure visibility, or additional mobile command ergonomics.
@@ -94,6 +94,18 @@ Tests: `python3 -m pytest tests/test_scalping.py -q` -> 3 passed. `python3 -m co
 Files changed: `kraken_telegram_gateway/gateway/service.py`, `kraken_telegram_gateway/gateway/schemas.py`, `kraken_telegram_gateway/gateway/app.py`, `tests/test_scalping.py`, `tests/test_api.py`, `README.md`, `SCALPING_MODE.md`, `DEV_LOG.md`.
 
 Tests: `python3 -m pytest -q` -> 117 passed, warning Starlette connu.
+
+### 2026-08-17 02:43 UTC - Kraken WebSocket Paper Snapshots
+
+- Added `KrakenFuturesBook` to consume Kraken Futures public `book_snapshot`, `book`, and `ticker_lite` messages and produce `MarketSnapshot` objects for the paper runner.
+- Added async WebSocket collection against `wss://futures.kraken.com/ws/v1` with `book` and `ticker_lite` subscriptions.
+- Added `POST /scalp/scheduler/tick-kraken` to manually run active paper sessions from live public Kraken market-data snapshots without sending orders.
+- Hardened scalping duration/hold-time comparisons across timezone-aware WebSocket timestamps and SQLite-loaded naive timestamps.
+- Verified a live public WebSocket collection for `PF_XBTUSD` returned a snapshot.
+
+Files changed: `kraken_telegram_gateway/gateway/market_data.py`, `kraken_telegram_gateway/gateway/service.py`, `kraken_telegram_gateway/gateway/app.py`, `tests/test_market_data.py`, `tests/test_api.py`, `pyproject.toml`, `README.md`, `SCALPING_MODE.md`, `DEV_LOG.md`.
+
+Tests: `python3 -m pytest -q` -> 121 passed, warning Starlette connu.
 
 ### 2026-08-17 01:44 UTC - Target Partial-Block Diagnostics
 

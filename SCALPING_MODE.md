@@ -124,12 +124,13 @@ Implemented:
 - Synthetic market-data adapter and paper runner for deterministic tests.
 - V1 signal evaluation from spread, top-of-book imbalance, and local volume ratio.
 - Runner rules for one open trade at a time, net-PnL close, max-hold close, duration stop, and max-losses stop.
+- Injectable active-session scheduler plus manual API ticks.
+- Kraken Futures public WebSocket adapter for book/ticker_lite snapshots feeding paper sessions.
 
 Not implemented yet:
 
-- WebSocket market-data ingestion.
-- Background loop scheduling for live paper sessions.
-- Paper fill simulation from real Kraken WebSocket or replayed market data.
+- Background loop scheduling for active paper sessions.
+- Longer paper validation runs and replay support.
 - Live order submission.
 
 ## Implementation Phases
@@ -138,8 +139,9 @@ Not implemented yet:
 2. Done: add market-data adapter interface and deterministic tests with synthetic ticks/book snapshots.
 3. Done: add paper runner with one open trade at a time and core stop rules.
 4. Done: add background scheduling for active paper sessions through an injectable snapshot provider and manual API tick.
-5. Add Kraken WebSocket market-data integration.
-6. Only after repeated paper validation, add a separate `SCALPING_LIVE_ENABLED=true` gate for live orders.
+5. Done: add Kraken WebSocket market-data integration for manual paper scheduler ticks.
+6. Add a periodic background loop for active paper sessions.
+7. Only after repeated paper validation, add a separate `SCALPING_LIVE_ENABLED=true` gate for live orders.
 
 ## Safety Notes
 
