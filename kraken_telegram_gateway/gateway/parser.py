@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 
-from kraken_telegram_gateway.gateway.schemas import Target, TradeIntent
+from kraken_telegram_gateway.gateway.schemas import ScalpIntent, Target, TradeIntent
 
 
 class CommandParseError(ValueError):
@@ -60,6 +60,61 @@ def parse_trade_command(text: str) -> TradeIntent:
         stop_price=float(values["stop"]) if values.get("stop") else None,
         leverage=int(values["leverage"]) if values.get("leverage") else 1,
     )
+
+
+def parse_scalp_start_command(text: str) -> ScalpIntent:
+    tokens = text.strip().split()
+    if not tokens or tokens[0].split("@", 1)[0].lower() != "/scalp_start":
+        raise CommandParseError("command must start with /scalp_start")
+
+    values: dict[str, str] = {}
+    for token in tokens[1:]:
+        if "=" not in token:
+            raise CommandParseError(f"invalid token: {token}")
+        key, raw_value = token.split("=", 1)
+        key = key.lower()
+        if key in {"amount", "amount_usdc"}:
+            values["amount_usdc"] = _strip_currency(raw_value)
+        elif key in {"side", "direction"}:
+            values["side_mode"] = raw_value
+        elif key in {"min_pnl", "min_net_pnl"}:
+            values["min_net_pnl"] = _strip_currency(raw_value)
+        elif key in {"duration", "max_hold"}:
+            values[f"{key}_seconds"] = str(_parse_duration_seconds(raw_value))
+        elif key == "pair":
+            values["pair"] = _normalize_pair(raw_value)
+        else:
+            values[key] = raw_value
+
+    missing = sorted({"pair", "amount_usdc"} - values.keys())
+    if missing:
+        raise CommandParseError(f"missing required fields: {', '.join(missing)}")
+
+    return ScalpIntent(
+        pair=values["pair"],
+        side_mode=values.get("side_mode", "both"),
+        amount_usdc=float(values["amount_usdc"]),
+        leverage=int(values.get("leverage", "1")),
+        duration_seconds=int(values.get("duration_seconds", "3600")),
+        max_hold_seconds=int(values.get("max_hold_seconds", "300")),
+        max_losses=int(values.get("max_losses", "3")),
+        min_net_pnl=float(values.get("min_net_pnl", "5")),
+        mode=values.get("mode", "paper"),
+    )
+
+
+def _parse_duration_seconds(raw_value: str) -> int:
+    match = re.fullmatch(r"(\d+)(s|m|h)?", raw_value.lower())
+    if not match:
+        raise CommandParseError(f"invalid duration: {raw_value}")
+    amount = int(match.group(1))
+    unit = match.group(2) or "s"
+    multiplier = {"s": 1, "m": 60, "h": 3600}[unit]
+    return amount * multiplier
+
+
+def _strip_currency(raw_value: str) -> str:
+    return re.sub(r"(?:usdc|usd)$", "", raw_value.lower())
 
 
 def _parse_entry(raw_value: str) -> tuple[str, float]:

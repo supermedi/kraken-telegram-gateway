@@ -198,6 +198,34 @@ def test_balance_api_rejects_missing_kraken_credentials_cleanly():
     assert response.json()["detail"] == "Kraken API credentials are required for signed requests."
 
 
+def test_scalp_session_api_creates_and_stops_paper_session():
+    with api_client() as client:
+        start_response = client.post(
+            "/commands/scalp-start",
+            json={
+                "text": (
+                    "/scalp_start pair=PF_LINKUSD amount_usdc=100 leverage=2 "
+                    "duration=60m max_hold=5m max_losses=3 min_pnl=5"
+                )
+            },
+        )
+        session_id = start_response.json()["session_id"]
+
+        detail_response = client.get(f"/scalp/{session_id}")
+        stop_response = client.post(f"/commands/scalp-stop/{session_id}")
+
+    assert start_response.status_code == 200
+    assert start_response.json()["status"] == "paper_active"
+    assert "Aucun ordre Kraken" in start_response.json()["message"]
+    assert detail_response.status_code == 200
+    assert detail_response.json()["session"]["pair"] == "PF_LINKUSD"
+    assert detail_response.json()["session"]["duration_seconds"] == 3600
+    assert detail_response.json()["session"]["max_hold_seconds"] == 300
+    assert detail_response.json()["trades"] == []
+    assert stop_response.status_code == 200
+    assert stop_response.json()["status"] == "stopped"
+
+
 def test_entry_filled_api_marks_entry_filled_and_targets_ready():
     with api_client() as client:
         preview_response = create_preview(

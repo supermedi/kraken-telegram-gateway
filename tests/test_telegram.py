@@ -8,6 +8,10 @@ from kraken_telegram_gateway.gateway.models import (
     OrderRole,
     OrderStatus,
     ProcessedTelegramUpdate,
+    ScalpSession,
+    ScalpSessionStatus,
+    ScalpTrade,
+    ScalpTradeStatus,
     Trade,
     TradeOrder,
 )
@@ -55,6 +59,95 @@ def test_trade_message_returns_copyable_trade_id_as_separate_message():
     assert replies == [replies[0], trade_id]
     assert replies[1] == trade_id
     assert "\n" not in replies[1]
+
+
+def test_scalp_start_creates_paper_session_with_multi_minute_hold():
+    with make_session() as session:
+        reply = dispatch_telegram_text(
+            "/scalp_start pair=LINK amount_usdc=100 leverage=2 duration=60m max_hold=5m max_losses=3 min_pnl=5",
+            session,
+            Settings(max_amount_usdc=100),
+        )
+        scalp_session = session.exec(select(ScalpSession)).one()
+
+    assert "Session scalp paper creee" in reply
+    assert "Aucun ordre Kraken ne sera envoye" in reply
+    assert "Pair: PF_LINKUSD" in reply
+    assert "Runtime cible: 1h" in reply
+    assert "Max hold: 5m" in reply
+    assert "Losses: 0 / 3" in reply
+    assert scalp_session.pair == "PF_LINKUSD"
+    assert scalp_session.amount_usdc == 100
+    assert scalp_session.leverage == 2
+    assert scalp_session.duration_seconds == 3600
+    assert scalp_session.max_hold_seconds == 300
+    assert scalp_session.max_losses == 3
+    assert scalp_session.min_net_pnl == 5
+    assert scalp_session.mode == "paper"
+    assert scalp_session.status == ScalpSessionStatus.PAPER_ACTIVE
+
+
+def test_scalp_start_rejects_live_mode_for_v1():
+    with make_session() as session:
+        reply = dispatch_telegram_text(
+            "/scalp_start pair=PF_LINKUSD amount_usdc=100 mode=live",
+            session,
+            Settings(max_amount_usdc=100),
+        )
+
+    assert "Commande refusee" in reply
+    assert "only supports mode=paper" in reply
+
+
+def test_scalp_status_stop_and_report_use_paper_metrics():
+    with make_session() as session:
+        start_reply = dispatch_telegram_text(
+            "/scalp_start pair=PF_LINKUSD amount_usdc=100 duration=60m max_hold=5m",
+            session,
+            Settings(max_amount_usdc=100),
+        )
+        session_id = next(line.split(": ", 1)[1] for line in start_reply.splitlines() if line.startswith("Scalp session:"))
+        session.add(
+            ScalpTrade(
+                session_id=session_id,
+                pair="PF_LINKUSD",
+                side="buy",
+                amount_usdc=100,
+                leverage=1,
+                entry_price=10,
+                exit_price=10.1,
+                net_pnl=6,
+                status=ScalpTradeStatus.PAPER_CLOSED,
+                close_reason="min_net_pnl",
+            )
+        )
+        session.add(
+            ScalpTrade(
+                session_id=session_id,
+                pair="PF_LINKUSD",
+                side="sell",
+                amount_usdc=100,
+                leverage=1,
+                entry_price=10,
+                status=ScalpTradeStatus.PAPER_OPEN,
+            )
+        )
+        session.commit()
+
+        status_reply = dispatch_telegram_text(f"/scalp_status {session_id}", session, Settings(max_amount_usdc=100))
+        report_reply = dispatch_telegram_text(f"/scalp_report {session_id}", session, Settings(max_amount_usdc=100))
+        stop_reply = dispatch_telegram_text(f"/scalp_stop {session_id}", session, Settings(max_amount_usdc=100))
+        scalp_session = session.get(ScalpSession, session_id)
+
+    assert "Trades: 1 closed, 1 open" in status_reply
+    assert "Wins: 1 | Losses: 0 / 3" in status_reply
+    assert "Net PnL: +6.00 USD" in status_reply
+    assert "winrate=100.0%" in report_reply
+    assert "Session scalp arretee" in stop_reply
+    assert "Statut: stopped" in stop_reply
+    assert scalp_session is not None
+    assert scalp_session.status == ScalpSessionStatus.STOPPED
+    assert scalp_session.stop_reason == "manual_stop"
 
 
 def test_render_telegram_html_preserves_code_block_without_markdown_underscores():

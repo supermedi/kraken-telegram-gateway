@@ -111,14 +111,32 @@ Final report should include:
 - stop reason,
 - whether results satisfy the configured thresholds.
 
+## Current V1 Foundation
+
+Implemented:
+
+- Persistent `ScalpSession`, `ScalpTrade`, and `ScalpSignal` tables.
+- `/scalp_start` parser with `duration=60m`, `max_hold=5m`, `max_losses=3`, `min_pnl=5`, `amount`/`amount_usdc`, and `mode=paper`.
+- Telegram commands `/scalp_start`, `/scalp_status`, `/scalp_stop`, and `/scalp_report`.
+- API endpoints `POST /commands/scalp-start`, `GET /scalp/{session_id}`, and `POST /commands/scalp-stop/{session_id}`.
+- Paper-only enforcement: `mode=live` is rejected.
+- Compact status/report formatting and basic PnL metrics from persisted paper trades.
+
+Not implemented yet:
+
+- WebSocket market-data ingestion.
+- Automated signal evaluation loop.
+- Paper fill simulation from real or replayed market data.
+- Automatic closing on `duration`, `max_hold`, or `max_losses`.
+- Live order submission.
+
 ## Implementation Phases
 
-1. Add command parsing, data models, and paper session state without market-data automation.
+1. Done: add command parsing, data models, Telegram/API commands, and paper session state without market-data automation.
 2. Add market-data adapter interface and deterministic tests with synthetic ticks/book snapshots.
 3. Add paper runner loop with one open trade at a time and stop rules.
-4. Add Telegram `/scalp_start`, `/scalp_status`, `/scalp_stop`, and `/scalp_report`.
-5. Add Kraken WebSocket market-data integration.
-6. Only after repeated paper validation, add a separate `SCALPING_LIVE_ENABLED=true` gate for live orders.
+4. Add Kraken WebSocket market-data integration.
+5. Only after repeated paper validation, add a separate `SCALPING_LIVE_ENABLED=true` gate for live orders.
 
 ## Safety Notes
 

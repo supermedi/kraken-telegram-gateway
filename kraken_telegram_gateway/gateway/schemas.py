@@ -4,6 +4,7 @@ from datetime import datetime
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from kraken_telegram_gateway.gateway.models import AuditEvent, Trade, TradeOrder
+from kraken_telegram_gateway.gateway.models import ScalpSession, ScalpSignal, ScalpTrade
 
 
 class Target(BaseModel):
@@ -50,6 +51,39 @@ class TradeIntent(BaseModel):
         if abs(total - 100) > 0.0001:
             raise ValueError("target percentages must total 100%")
         return self
+
+
+class ScalpIntent(BaseModel):
+    pair: str
+    side_mode: str = "both"
+    amount_usdc: float = Field(gt=0)
+    leverage: int = Field(default=1, ge=1)
+    duration_seconds: int = Field(default=3600, ge=60)
+    max_hold_seconds: int = Field(default=300, ge=5)
+    max_losses: int = Field(default=3, ge=1)
+    min_net_pnl: float = Field(default=5, gt=0)
+    mode: str = "paper"
+
+    @field_validator("pair")
+    @classmethod
+    def normalize_pair(cls, value: str) -> str:
+        return value.upper()
+
+    @field_validator("side_mode")
+    @classmethod
+    def validate_side_mode(cls, value: str) -> str:
+        side_mode = value.lower()
+        if side_mode not in {"buy", "sell", "both"}:
+            raise ValueError("side must be buy, sell, or both")
+        return side_mode
+
+    @field_validator("mode")
+    @classmethod
+    def validate_mode(cls, value: str) -> str:
+        mode = value.lower()
+        if mode != "paper":
+            raise ValueError("scalping V1 only supports mode=paper")
+        return mode
 
 
 class TradePreview(BaseModel):
@@ -102,3 +136,19 @@ class AccountBalanceResponse(BaseModel):
     equity: Decimal | None = None
     available: Decimal | None = None
     margin: Decimal | None = None
+
+
+class ScalpStartRequest(BaseModel):
+    text: str
+
+
+class ScalpSessionDetail(BaseModel):
+    session: ScalpSession
+    trades: list[ScalpTrade]
+    signals: list[ScalpSignal]
+
+
+class ScalpSessionResult(BaseModel):
+    session_id: str
+    status: str
+    message: str

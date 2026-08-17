@@ -14,6 +14,17 @@ class TradeStatus(StrEnum):
     REJECTED = "rejected"
 
 
+class ScalpSessionStatus(StrEnum):
+    PAPER_ACTIVE = "paper_active"
+    STOPPED = "stopped"
+    COMPLETED = "completed"
+
+
+class ScalpTradeStatus(StrEnum):
+    PAPER_OPEN = "paper_open"
+    PAPER_CLOSED = "paper_closed"
+
+
 class OrderRole(StrEnum):
     ENTRY = "entry"
     TARGET_EXIT = "target_exit"
@@ -47,6 +58,58 @@ class Trade(SQLModel, table=True):
     warning: str | None = None
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
+
+
+class ScalpSession(SQLModel, table=True):
+    id: str = Field(default_factory=lambda: uuid4().hex, primary_key=True)
+    pair: str = Field(index=True)
+    side_mode: str
+    amount_usdc: float
+    leverage: int
+    duration_seconds: int
+    max_hold_seconds: int
+    max_losses: int
+    min_net_pnl: float
+    mode: str = "paper"
+    status: ScalpSessionStatus = ScalpSessionStatus.PAPER_ACTIVE
+    stop_reason: str | None = None
+    started_at: datetime = Field(default_factory=utc_now)
+    stopped_at: datetime | None = None
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
+class ScalpTrade(SQLModel, table=True):
+    id: str = Field(default_factory=lambda: uuid4().hex, primary_key=True)
+    session_id: str = Field(index=True)
+    pair: str
+    side: str
+    amount_usdc: float
+    leverage: int
+    entry_price: float
+    exit_price: float | None = None
+    gross_pnl: float | None = None
+    estimated_fees: float | None = None
+    net_pnl: float | None = None
+    status: ScalpTradeStatus = ScalpTradeStatus.PAPER_OPEN
+    close_reason: str | None = None
+    opened_at: datetime = Field(default_factory=utc_now)
+    closed_at: datetime | None = None
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
+class ScalpSignal(SQLModel, table=True):
+    id: str = Field(default_factory=lambda: uuid4().hex, primary_key=True)
+    session_id: str = Field(index=True)
+    scalp_trade_id: str | None = Field(default=None, index=True)
+    signal_kind: str
+    score: float
+    spread: float | None = None
+    book_imbalance: float | None = None
+    volume_ratio: float | None = None
+    reason: str
+    created_at: datetime = Field(default_factory=utc_now)
 
 
 class AuditEvent(SQLModel, table=True):

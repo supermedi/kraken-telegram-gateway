@@ -19,10 +19,13 @@ from kraken_telegram_gateway.gateway.service import (
     format_audit_events,
     format_account_balances,
     format_audit_event_types,
+    format_scalp_report,
+    format_scalp_status,
     format_trade_list,
     format_trade_orders,
     format_trade_status,
     get_account_balances,
+    get_scalp_session_detail,
     get_trade_detail,
     is_trading_paused,
     list_audit_events,
@@ -31,6 +34,8 @@ from kraken_telegram_gateway.gateway.service import (
     mark_entry_filled,
     pause_trading,
     resume_trading,
+    start_scalp_session,
+    stop_scalp_session,
     submit_ready_targets,
 )
 
@@ -164,6 +169,33 @@ def dispatch_telegram_text(text: str, session: Session, settings: Settings) -> s
             balances = get_account_balances(settings, **filters)
             return format_account_balances(balances)
 
+        if command == "/scalp_start":
+            result = start_scalp_session(text, session)
+            if result.session_id:
+                detail = get_scalp_session_detail(result.session_id, session)
+                if detail is not None:
+                    return f"{result.message}\n{format_scalp_status(detail)}"
+            return f"{result.message}\nStatut: {result.status}"
+
+        if command == "/scalp_stop":
+            session_id = _require_scalp_session_id(argument, "/scalp_stop")
+            result = stop_scalp_session(session_id, session)
+            return f"{result.message}\nSession ID: {result.session_id}\nStatut: {result.status}"
+
+        if command == "/scalp_status":
+            session_id = _require_scalp_session_id(argument, "/scalp_status")
+            detail = get_scalp_session_detail(session_id, session)
+            if detail is None:
+                return "Session scalp introuvable."
+            return format_scalp_status(detail)
+
+        if command == "/scalp_report":
+            session_id = _require_scalp_session_id(argument, "/scalp_report")
+            detail = get_scalp_session_detail(session_id, session)
+            if detail is None:
+                return "Session scalp introuvable."
+            return format_scalp_report(detail)
+
         if command == "/pause":
             return pause_trading(session)
 
@@ -178,7 +210,10 @@ def dispatch_telegram_text(text: str, session: Session, settings: Settings) -> s
                 "/status [trade_id], /orders <trade_id> [status=... role=...], "
                 "/trades [limit=5 status=... pair=... side=buy|sell], "
                 "/audit [trade_id] [event_type=...|type=... limit=5], /audit_types, "
-                "/balance [account=... currency=...|asset=...], /pause, /resume.\n"
+                "/balance [account=... currency=...|asset=...], "
+                "/scalp_start pair=PF_LINKUSD amount_usdc=100 duration=60m max_hold=5m max_losses=3, "
+                "/scalp_status <session_id>, /scalp_stop <session_id>, /scalp_report <session_id>, "
+                "/pause, /resume.\n"
                 "Exemple: /trade pair=PF_XBTUSD side=buy amount_usdc=100 entry=limit:65000 "
                 "t1=67000:40% t2=69000:40% t3=72000:20%\n"
                 "Exemple court: LINK LONG 25USDC 2x Entry 9.356 Sl 9.298"
@@ -267,6 +302,12 @@ def _is_allowed_user(user_id: int | None, settings: Settings) -> bool:
 def _require_trade_id(argument: str, command: str) -> str:
     if not argument:
         raise ValueError(f"{command} requires a trade_id")
+    return argument.split()[0]
+
+
+def _require_scalp_session_id(argument: str, command: str) -> str:
+    if not argument:
+        raise ValueError(f"{command} requires a session_id")
     return argument.split()[0]
 
 

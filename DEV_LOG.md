@@ -23,7 +23,7 @@ The hourly isolated cron must use this file as the handoff point between runs:
 - Deployment: Dockerfile, Docker Compose, GHCR publish workflow, final public image name `ghcr.io/supermedi/kraken-telegram-gateway:latest`, and deployment documentation are in place; runtime secrets stay in local `.env`.
 - GitHub: dedicated public repository created and initial code pushed to `https://github.com/supermedi/kraken-telegram-gateway`.
 - Verification baseline: `python3 -m pytest -q` was last reported passing with 107 tests on 2026-08-17.
-- Scalping mode: design prepared in `SCALPING_MODE.md` as a separate paper-first session mode with `/scalp_start`, `/scalp_status`, `/scalp_stop`, `/scalp_report`, multi-minute holds, max-loss auto stop, and net-PnL reporting before any live gate.
+- Scalping mode: V1 foundation implemented as a separate paper-only session mode with persistent `ScalpSession`/`ScalpTrade`/`ScalpSignal` tables, `/scalp_start`, `/scalp_status`, `/scalp_stop`, `/scalp_report`, API endpoints, multi-minute `max_hold`, and net-PnL reporting. Market-data runner/WebSocket automation remains queued before any live gate.
 
 ## Guardrails
 
@@ -41,10 +41,12 @@ The hourly isolated cron must use this file as the handoff point between runs:
 
 1. Validate Docker build in the target VPS environment, then confirm GHCR pull/run health against `ghcr.io/supermedi/kraken-telegram-gateway:latest`.
 2. Validate Docker/GHCR deployment on the VPS with the public Kraken instrument metadata fallback enabled.
-3. Implement scalping V1 foundation in paper-only mode: parser, models, synthetic market-data adapter, session lifecycle, and stop-rule tests from `SCALPING_MODE.md`.
-4. Add Kraken account-event polling/webhook abstraction for real entry fill detection only after live integration is explicitly approved.
-5. Monitor target-submission partial-block diagnostics in live-gated testing and refine only if operator feedback remains unclear.
-6. Extend audit/balance/Telegram diagnostics only if operators need retention/export, balance freshness, richer webhook failure visibility, or additional mobile command ergonomics.
+3. Add scalping market-data adapter interface and deterministic tests with synthetic ticks/book snapshots.
+4. Add scalping paper runner loop with one open trade at a time, max-hold/duration/max-loss stop rules, and status/report updates.
+5. Add Kraken WebSocket market-data integration for scalping paper sessions.
+6. Add Kraken account-event polling/webhook abstraction for real entry fill detection only after live integration is explicitly approved.
+7. Monitor target-submission partial-block diagnostics in live-gated testing and refine only if operator feedback remains unclear.
+8. Extend audit/balance/Telegram diagnostics only if operators need retention/export, balance freshness, richer webhook failure visibility, or additional mobile command ergonomics.
 
 ## Cycle Log
 
@@ -58,6 +60,18 @@ The hourly isolated cron must use this file as the handoff point between runs:
 Files changed: `SCALPING_MODE.md`, `README.md`, `DEV_LOG.md`.
 
 Tests: documentation-only change; no runtime tests required.
+
+### 2026-08-17 02:18 UTC - Scalping Paper V1 Foundation
+
+- Implemented persistent scalping paper session models separate from manual trades: `ScalpSession`, `ScalpTrade`, and `ScalpSignal`.
+- Added `/scalp_start` parsing with `duration=60m`, `max_hold=5m`, `max_losses=3`, `min_pnl=5`, and paper-only `mode` validation.
+- Added Telegram commands `/scalp_start`, `/scalp_status`, `/scalp_stop`, and `/scalp_report`, plus API endpoints `POST /commands/scalp-start`, `GET /scalp/{session_id}`, and `POST /commands/scalp-stop/{session_id}`.
+- Kept all Kraken live trading paths untouched; `mode=live` is rejected for scalping V1.
+- Documented the delivered V1 foundation and the remaining WebSocket/runner work in `README.md` and `SCALPING_MODE.md`.
+
+Files changed: `kraken_telegram_gateway/gateway/models.py`, `kraken_telegram_gateway/gateway/schemas.py`, `kraken_telegram_gateway/gateway/parser.py`, `kraken_telegram_gateway/gateway/service.py`, `kraken_telegram_gateway/gateway/telegram.py`, `kraken_telegram_gateway/gateway/app.py`, `tests/test_telegram.py`, `tests/test_api.py`, `README.md`, `SCALPING_MODE.md`, `DEV_LOG.md`.
+
+Tests: targeted scalping Telegram/API tests passed.
 
 ### 2026-08-17 01:44 UTC - Target Partial-Block Diagnostics
 

@@ -15,6 +15,9 @@ from kraken_telegram_gateway.gateway.schemas import (
     AuditEventList,
     AuditEventTypeList,
     ConfirmResult,
+    ScalpSessionDetail,
+    ScalpSessionResult,
+    ScalpStartRequest,
     TradeDetail,
     TradeList,
     TradePreview,
@@ -24,12 +27,15 @@ from kraken_telegram_gateway.gateway.service import (
     confirm_trade,
     create_trade_preview,
     get_account_balances,
+    get_scalp_session_detail,
     get_trade_detail,
     get_trade_orders,
     list_audit_event_types,
     list_audit_events,
     list_trades,
     mark_entry_filled,
+    start_scalp_session,
+    stop_scalp_session,
     submit_ready_targets,
 )
 from kraken_telegram_gateway.gateway.telegram import (
@@ -68,6 +74,30 @@ def get_balance(
         return get_account_balances(settings, account=account, currency=currency)
     except (KrakenAccountError, KrakenLiveTradingDisabledError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/commands/scalp-start", response_model=ScalpSessionResult)
+def scalp_start_command(
+    request: ScalpStartRequest,
+    session: Session = Depends(get_session),
+) -> ScalpSessionResult:
+    try:
+        return start_scalp_session(request.text, session)
+    except (CommandParseError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/commands/scalp-stop/{session_id}", response_model=ScalpSessionResult)
+def scalp_stop_command(session_id: str, session: Session = Depends(get_session)) -> ScalpSessionResult:
+    return stop_scalp_session(session_id, session)
+
+
+@app.get("/scalp/{session_id}", response_model=ScalpSessionDetail)
+def get_scalp_session(session_id: str, session: Session = Depends(get_session)) -> ScalpSessionDetail:
+    detail = get_scalp_session_detail(session_id, session)
+    if detail is None:
+        raise HTTPException(status_code=404, detail="Scalp session not found")
+    return detail
 
 
 @app.post("/commands/trade", response_model=TradePreview)

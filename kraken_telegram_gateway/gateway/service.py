@@ -10,18 +10,25 @@ from kraken_telegram_gateway.gateway.models import (
     BotState,
     OrderRole,
     OrderStatus,
+    ScalpSession,
+    ScalpSessionStatus,
+    ScalpSignal,
+    ScalpTrade,
+    ScalpTradeStatus,
     Trade,
     TradeOrder,
     TradeStatus,
     utc_now,
 )
-from kraken_telegram_gateway.gateway.parser import parse_trade_command
+from kraken_telegram_gateway.gateway.parser import parse_scalp_start_command, parse_trade_command
 from kraken_telegram_gateway.gateway.risk import validate_risk
 from kraken_telegram_gateway.gateway.schemas import (
     AuditEventList,
     AuditEventTypeList,
     AuditEventTypeSummary,
     ConfirmResult,
+    ScalpSessionDetail,
+    ScalpSessionResult,
     TradeDetail,
     TradeList,
     TradePreview,
@@ -52,6 +59,103 @@ def create_trade_preview(text: str, session: Session, settings: Settings) -> Tra
     session.commit()
     session.refresh(trade)
     return TradePreview(trade_id=trade.id, summary=format_trade_summary(trade), warning=warning, dry_run=trade.dry_run)
+
+
+def start_scalp_session(text: str, session: Session) -> ScalpSessionResult:
+    if is_trading_paused(session):
+        return ScalpSessionResult(session_id="", status="paused", message="Trading en pause.")
+
+    intent = parse_scalp_start_command(text)
+    active = session.exec(
+        select(ScalpSession).where(
+            ScalpSession.pair == intent.pair,
+            ScalpSession.status == ScalpSessionStatus.PAPER_ACTIVE,
+        )
+    ).first()
+    if active is not None:
+        return ScalpSessionResult(
+            session_id=active.id,
+            status=active.status,
+            message=f"Session scalp deja active pour {active.pair}.",
+        )
+
+    scalp_session = ScalpSession(
+        pair=intent.pair,
+        side_mode=intent.side_mode,
+        amount_usdc=intent.amount_usdc,
+        leverage=intent.leverage,
+        duration_seconds=intent.duration_seconds,
+        max_hold_seconds=intent.max_hold_seconds,
+        max_losses=intent.max_losses,
+        min_net_pnl=intent.min_net_pnl,
+        mode=intent.mode,
+    )
+    session.add(scalp_session)
+    session.commit()
+    session.refresh(scalp_session)
+    session.add(
+        AuditEvent(
+            event_type="scalp_session_started",
+            message=(
+                f"Scalp paper session {scalp_session.id} started for {scalp_session.pair}; "
+                f"duration={scalp_session.duration_seconds}s max_hold={scalp_session.max_hold_seconds}s."
+            ),
+        )
+    )
+    session.commit()
+    return ScalpSessionResult(
+        session_id=scalp_session.id,
+        status=scalp_session.status,
+        message="Session scalp paper creee. Aucun ordre Kraken ne sera envoye.",
+    )
+
+
+def stop_scalp_session(session_id: str, session: Session, *, reason: str = "manual_stop") -> ScalpSessionResult:
+    scalp_session = session.get(ScalpSession, session_id)
+    if scalp_session is None:
+        return ScalpSessionResult(session_id=session_id, status="not_found", message="Session scalp introuvable.")
+    if scalp_session.status != ScalpSessionStatus.PAPER_ACTIVE:
+        return ScalpSessionResult(
+            session_id=scalp_session.id,
+            status=scalp_session.status,
+            message=f"Session scalp deja arretee: {scalp_session.stop_reason or scalp_session.status}.",
+        )
+
+    scalp_session.status = ScalpSessionStatus.STOPPED
+    scalp_session.stop_reason = reason
+    scalp_session.stopped_at = utc_now()
+    scalp_session.updated_at = utc_now()
+    session.add(scalp_session)
+    session.add(
+        AuditEvent(
+            event_type="scalp_session_stopped",
+            message=f"Scalp paper session {scalp_session.id} stopped: {reason}.",
+        )
+    )
+    session.commit()
+    return ScalpSessionResult(
+        session_id=scalp_session.id,
+        status=scalp_session.status,
+        message="Session scalp arretee. Aucun ordre Kraken envoye.",
+    )
+
+
+def get_scalp_session_detail(session_id: str, session: Session) -> ScalpSessionDetail | None:
+    scalp_session = session.get(ScalpSession, session_id)
+    if scalp_session is None:
+        return None
+    trades = session.exec(
+        select(ScalpTrade)
+        .where(ScalpTrade.session_id == session_id)
+        .order_by(ScalpTrade.created_at.asc(), ScalpTrade.id.asc())
+    ).all()
+    signals = session.exec(
+        select(ScalpSignal)
+        .where(ScalpSignal.session_id == session_id)
+        .order_by(ScalpSignal.created_at.desc(), ScalpSignal.id.desc())
+        .limit(20)
+    ).all()
+    return ScalpSessionDetail(session=scalp_session, trades=list(trades), signals=list(signals))
 
 
 def confirm_trade(trade_id: str, session: Session, settings: Settings) -> ConfirmResult:
@@ -486,6 +590,69 @@ def format_account_balances(balances: list[AccountBalance]) -> str:
         )
         lines.append(" | ".join(parts))
     return "\n".join(lines)
+
+
+def format_scalp_status(detail: ScalpSessionDetail) -> str:
+    metrics = compute_scalp_metrics(detail.trades)
+    scalp_session = detail.session
+    lines = [
+        f"Scalp session: {scalp_session.id}",
+        f"Pair: {scalp_session.pair}",
+        f"Mode: {scalp_session.mode}",
+        f"Statut: {scalp_session.status}",
+        f"Runtime cible: {format_seconds(scalp_session.duration_seconds)}",
+        f"Max hold: {format_seconds(scalp_session.max_hold_seconds)}",
+        f"Montant: {scalp_session.amount_usdc:g} USDC | leverage={scalp_session.leverage}x | side={scalp_session.side_mode}",
+        f"Trades: {metrics['closed']} closed, {metrics['open']} open",
+        f"Wins: {metrics['wins']} | Losses: {metrics['losses']} / {scalp_session.max_losses}",
+        f"Net PnL: {metrics['net_pnl']:+.2f} USD",
+    ]
+    if scalp_session.stop_reason:
+        lines.append(f"Stop: {scalp_session.stop_reason}")
+    return "\n".join(lines)
+
+
+def format_scalp_report(detail: ScalpSessionDetail) -> str:
+    metrics = compute_scalp_metrics(detail.trades)
+    win_rate = (metrics["wins"] / metrics["closed"] * 100) if metrics["closed"] else 0
+    lines = [
+        f"Rapport scalp: {detail.session.id}",
+        f"{detail.session.pair} | mode={detail.session.mode} | statut={detail.session.status}",
+        f"Trades fermes: {metrics['closed']} | ouverts: {metrics['open']} | winrate={win_rate:.1f}%",
+        f"Net PnL: {metrics['net_pnl']:+.2f} USD | avg win={metrics['avg_win']:+.2f} | avg loss={metrics['avg_loss']:+.2f}",
+        f"Max losses: {metrics['losses']} / {detail.session.max_losses}",
+        f"Signaux journalises: {len(detail.signals)} derniers visibles",
+    ]
+    if detail.session.stop_reason:
+        lines.append(f"Raison d'arret: {detail.session.stop_reason}")
+    if metrics["closed"] == 0:
+        lines.append("Aucun trade paper ferme pour l'instant; le runner market-data n'est pas encore branche.")
+    return "\n".join(lines)
+
+
+def compute_scalp_metrics(trades: list[ScalpTrade]) -> dict[str, float | int]:
+    closed = [trade for trade in trades if trade.status == ScalpTradeStatus.PAPER_CLOSED]
+    open_trades = [trade for trade in trades if trade.status == ScalpTradeStatus.PAPER_OPEN]
+    pnl_values = [trade.net_pnl or 0 for trade in closed]
+    wins = [value for value in pnl_values if value > 0]
+    losses = [value for value in pnl_values if value < 0]
+    return {
+        "closed": len(closed),
+        "open": len(open_trades),
+        "wins": len(wins),
+        "losses": len(losses),
+        "net_pnl": sum(pnl_values),
+        "avg_win": sum(wins) / len(wins) if wins else 0,
+        "avg_loss": sum(losses) / len(losses) if losses else 0,
+    }
+
+
+def format_seconds(seconds: int) -> str:
+    if seconds % 3600 == 0:
+        return f"{seconds // 3600}h"
+    if seconds % 60 == 0:
+        return f"{seconds // 60}m"
+    return f"{seconds}s"
 
 
 def format_optional_decimal(value) -> str:
