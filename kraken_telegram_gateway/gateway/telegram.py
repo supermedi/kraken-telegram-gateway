@@ -199,6 +199,10 @@ def dispatch_telegram_text(text: str, session: Session, settings: Settings) -> s
                 return "Session scalp introuvable."
             return format_scalp_report(detail)
 
+        if command == "/scalp_stop":
+            session_id = _require_scalp_session_id(argument, "/scalp_stop")
+            return stop_scalp_session(session_id, session).message
+
         if command in {"/scalp_sync_fills", "/scalp-sync-fills"}:
             session_id = _require_scalp_session_id(argument, "/scalp_sync_fills")
             return format_scalp_fill_sync_result(sync_scalp_entry_fills(session_id, session, settings))

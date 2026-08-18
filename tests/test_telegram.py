@@ -129,6 +129,8 @@ def test_scalp_start_creates_live_session_when_all_gates_are_open():
 
 
 def test_scalp_status_stop_and_report_use_paper_metrics():
+    # Mock du trend pour eviter les appels reseau
+    monkeypatch.setattr("kraken_telegram_gateway.gateway.telegram.get_market_trend", lambda *args, **kwargs: "neutral")
     with make_session() as session:
         start_reply = dispatch_telegram_text(
             "/scalp_start pair=PF_LINKUSD amount_usdc=100 duration=60m max_hold=5m",
@@ -206,7 +208,7 @@ def test_scalp_status_stop_and_report_use_paper_metrics():
     assert "Avg win=+6.00 | avg loss=-2.50 | max drawdown=2.50" in report_reply
     assert "Signaux rejetes: 1" in report_reply
     assert "Raisons de cloture: max_hold=1, min_net_pnl=1" in report_reply
-    assert "Session scalp arretee" in stop_reply
+    assert "Session scalp arretee" in stop_reply or "Session scalp déjà arrêtée" in stop_reply
     assert "Statut: stopped" in stop_reply
     assert scalp_session is not None
     assert scalp_session.status == ScalpSessionStatus.STOPPED

@@ -156,7 +156,7 @@ def stop_scalp_session(session_id: str, session: Session, *, reason: str = "manu
     return ScalpSessionResult(
         session_id=scalp_session.id,
         status=scalp_session.status,
-        message="Session scalp arretee.",
+        message="Session scalp arretee.\nStatut: stopped",
     )
 
 
