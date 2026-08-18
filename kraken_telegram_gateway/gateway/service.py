@@ -608,31 +608,34 @@ def sync_scalp_entry_fills(session_id: str, session: Session, settings: Settings
 
 def asyncio_run_collect_snapshots(product_id: str, *, limit: int, timeout_seconds: float) -> list[MarketSnapshot]:
     import asyncio
+    import threading
 
-    async def _safe_collect():
+    result = []
+    def _thread_worker():
         try:
-            return await collect_kraken_futures_snapshots(
-                product_id,
-                limit=limit,
-                timeout_seconds=timeout_seconds,
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            data = loop.run_until_complete(
+                collect_kraken_futures_snapshots(
+                    product_id,
+                    limit=limit,
+                    timeout_seconds=timeout_seconds,
+                )
             )
+            if data:
+                result.extend(data)
         except Exception as e:
-            print(f"DEBUG: Error collecting snapshots for {product_id}: {e}")
-            return []
+            print(f"DEBUG: Error in asyncio thread for {product_id}: {e}")
+        finally:
+            try:
+                loop.close()
+            except:
+                pass
 
-    # Vérification si une boucle existe déjà (cas typique d'un service tournant déjà en async)
-    try:
-        loop = asyncio.get_running_loop()
-        # Si une boucle tourne, on ne peut pas utiliser run(), il faut planifier la tâche
-        # Comme nous sommes dans une fonction synchrone, nous créons une future ou un bridge
-        return asyncio.run_coroutine_threadsafe(_safe_collect(), loop).result(timeout=timeout_seconds)
-    except RuntimeError:
-        # Aucune boucle ne tourne, nous pouvons utiliser run() en toute sécurité
-        return asyncio.run(_safe_collect())
-    except Exception as e:
-        print(f"DEBUG: Fatal error in asyncio_run_collect_snapshots: {e}")
-        return []
-
+    t = threading.Thread(target=_thread_worker)
+    t.start()
+    t.join(timeout=timeout_seconds + 2)
+    return result
 
 def confirm_trade(trade_id: str, session: Session, settings: Settings) -> ConfirmResult:
     if is_trading_paused(session):
