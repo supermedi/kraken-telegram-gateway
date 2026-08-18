@@ -253,17 +253,6 @@ def run_scalp_paper_snapshots(
             trend_1h=None,
             trend_30m=None
         )
-        signal = ScalpSignal(
-            session_id=scalp_session.id,
-            signal_kind="book_volume_v1",
-            score=decision.score,
-            spread=snapshot.spread,
-            book_imbalance=snapshot.book_imbalance,
-            volume_ratio=snapshot.volume_ratio,
-            reason=decision.reason,
-            created_at=snapshot.timestamp,
-        )
-        session.add(signal)
         if decision.side is None:
             continue
 
@@ -275,13 +264,26 @@ def run_scalp_paper_snapshots(
             amount_usdc=scalp_session.amount_usdc,
             leverage=scalp_session.leverage,
             entry_price=entry_price,
+            status=ScalpTradeStatus.PAPER_OPEN,
             opened_at=snapshot.timestamp,
             created_at=snapshot.timestamp,
             updated_at=snapshot.timestamp,
         )
         session.add(scalp_trade)
         session.flush()
-        signal.scalp_trade_id = scalp_trade.id
+        session.refresh(scalp_trade)
+        
+        signal = ScalpSignal(
+            session_id=scalp_session.id,
+            scalp_trade_id=scalp_trade.id,
+            signal_kind="book_volume_v1",
+            score=decision.score,
+            spread=snapshot.spread,
+            book_imbalance=snapshot.book_imbalance,
+            volume_ratio=snapshot.volume_ratio,
+            reason=decision.reason,
+            created_at=snapshot.timestamp,
+        )
         session.add(signal)
         opened += 1
 
@@ -374,6 +376,13 @@ def run_scalp_live_snapshots(
         if _get_open_scalp_trade(scalp_session.id, session) is not None:
             continue
 
+        # 3. Logique d'entree
+        if _scalp_session_elapsed(scalp_session, snapshot):
+            _complete_scalp_session(scalp_session, "duration_elapsed", session)
+            break
+        if _get_open_scalp_trade(scalp_session.id, session) is not None:
+            continue
+
         decision = evaluate_scalp_signal(
             snapshot, 
             side_mode=scalp_session.side_mode,
@@ -381,7 +390,6 @@ def run_scalp_live_snapshots(
             trend_30m=trend_30m
         )
         
-        # ... (le reste de la boucle d'entree inchangé)
         if decision.side is None:
             continue
 
@@ -404,6 +412,7 @@ def run_scalp_live_snapshots(
             )
             session.add(scalp_trade)
             session.flush()
+            session.refresh(scalp_trade)
             session.add(
                 AuditEvent(
                     event_type="scalp_live_entry_submitted",
@@ -411,6 +420,19 @@ def run_scalp_live_snapshots(
                 )
             )
             submitted += 1
+            
+            signal = ScalpSignal(
+                session_id=scalp_session.id,
+                scalp_trade_id=scalp_trade.id,
+                signal_kind="book_volume_v1",
+                score=decision.score,
+                spread=snapshot.spread,
+                book_imbalance=snapshot.book_imbalance,
+                volume_ratio=snapshot.volume_ratio,
+                reason=decision.reason,
+                created_at=snapshot.timestamp,
+            )
+            session.add(signal)
         else:
             blocked += 1
             session.add(
@@ -419,18 +441,18 @@ def run_scalp_live_snapshots(
                     message=f"Scalp live entry blocked: {result['message']}",
                 )
             )
-            
-        signal = ScalpSignal(
-            session_id=scalp_session.id,
-            signal_kind="book_volume_v1",
-            score=decision.score,
-            spread=snapshot.spread,
-            book_imbalance=snapshot.book_imbalance,
-            volume_ratio=snapshot.volume_ratio,
-            reason=decision.reason,
-            created_at=snapshot.timestamp,
-        )
-        session.add(signal)
+            signal = ScalpSignal(
+                session_id=scalp_session.id,
+                scalp_trade_id=None,
+                signal_kind="book_volume_v1",
+                score=decision.score,
+                spread=snapshot.spread,
+                book_imbalance=snapshot.book_imbalance,
+                volume_ratio=snapshot.volume_ratio,
+                reason=decision.reason,
+                created_at=snapshot.timestamp,
+            )
+            session.add(signal)
 
     scalp_session.updated_at = utc_now()
     session.add(scalp_session)

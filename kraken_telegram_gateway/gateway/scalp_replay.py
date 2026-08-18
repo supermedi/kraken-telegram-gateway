@@ -35,6 +35,8 @@ def snapshots_from_rows(rows: list[Any]) -> list[MarketSnapshot]:
             snapshot = book.apply(row)
             if snapshot is not None:
                 snapshots.append(snapshot)
+            else:
+                print(f"DEBUG: snapshot is None for row: {row}")
             continue
         snapshots.append(snapshot_from_row(row))
     return snapshots

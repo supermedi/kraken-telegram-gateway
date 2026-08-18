@@ -452,7 +452,11 @@ class KrakenClient:
         return parse_account_balances(payload)
 
     def fetch_ohlcv(self, symbol: str, interval: str, count: int = 100) -> list[dict[str, Any]]:
-        url = f"{self.settings.kraken_futures_base_url.rstrip('/')}/api/charts/v1/trade/{symbol}/{interval}"
+        # Mapping des intervalles numériques vers les formats de l'API charts (ex: 60 -> 1h, 30 -> 30m, 1 -> 1m)
+        interval_map = {"60": "1h", "30": "30m", "15": "15m", "5": "5m", "1": "1m"}
+        formatted_interval = interval_map.get(interval, interval)
+        
+        url = f"{self.settings.kraken_futures_base_url.rstrip('/')}/api/charts/v1/trade/{symbol}/{formatted_interval}"
         try:
             response = httpx.get(url, timeout=10)
             response.raise_for_status()

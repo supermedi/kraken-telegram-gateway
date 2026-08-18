@@ -226,7 +226,7 @@ def test_scalp_live_runner_submits_entry_order_when_signal_passes(monkeypatch):
         signals = session.exec(select(ScalpSignal)).all()
 
     assert run_result.status == ScalpSessionStatus.LIVE_ACTIVE
-    assert run_result.message == "Live runner: 1 ordre(s) envoyes, 0 ordre(s) bloques."
+    assert run_result.message == "Live runner: 1 ordre(s) soumis, 0 bloque(s)."
     assert calls == [(result.session_id, "buy", 10.01)]
     assert len(trades) == 1
     assert trades[0].status == ScalpTradeStatus.LIVE_SUBMITTED
