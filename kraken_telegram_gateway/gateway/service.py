@@ -178,6 +178,31 @@ def get_scalp_session_detail(session_id: str, session: Session) -> ScalpSessionD
     return ScalpSessionDetail(session=scalp_session, trades=list(trades), signals=list(signals))
 
 
+
+def get_scalp_audit(session_id: str, session: Session) -> str:
+    scalp_session = session.get(ScalpSession, session_id)
+    if scalp_session is None:
+        return "Session scalp introuvable."
+    trades = session.exec(
+        select(ScalpTrade)
+        .where(
+            ScalpTrade.session_id == session_id,
+            ScalpTrade.close_reason == "max_hold",
+        )
+        .order_by(ScalpTrade.closed_at.desc())
+    ).all()
+    if not trades:
+        return f"Aucun trade ferme par max_hold pour la session {session_id}."
+    lines = [f"Trades fermes par max_hold ({len(trades)}):"]
+    for trade in trades:
+        lines.append(
+            f"- Trade {trade.id}: {trade.pair} {trade.side} @ {trade.entry_price:g} "
+            f"| PnL: {trade.net_pnl:+.2f} USD | Ferme: {trade.closed_at}"
+        )
+    return "\n".join(lines)
+
+
+
 def get_scalp_session_report(session_id: str, session: Session) -> ScalpSessionReport | None:
     detail = get_scalp_session_detail(session_id, session)
     if detail is None:
