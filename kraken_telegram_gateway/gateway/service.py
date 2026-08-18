@@ -358,10 +358,6 @@ def run_scalp_live_snapshots(
 
     client = KrakenClient(settings)
     
-    # 1. Recuperation des tendances une seule fois pour ce cycle
-    trend_1h = get_market_trend(client, scalp_session.pair, timeframe="60")
-    trend_30m = get_market_trend(client, scalp_session.pair, timeframe="30")
-    
     submitted = 0
     blocked = 0
     
@@ -369,13 +365,6 @@ def run_scalp_live_snapshots(
         # 2. Monitoring automatique des positions existantes
         monitor_live_scalp_positions(scalp_session, snapshot, client, session)
         
-        # 3. Logique d'entree
-        if _scalp_session_elapsed(scalp_session, snapshot):
-            _complete_scalp_session(scalp_session, "duration_elapsed", session)
-            break
-        if _get_open_scalp_trade(scalp_session.id, session) is not None:
-            continue
-
         # 3. Logique d'entree
         if _scalp_session_elapsed(scalp_session, snapshot):
             _complete_scalp_session(scalp_session, "duration_elapsed", session)
@@ -607,35 +596,38 @@ def sync_scalp_entry_fills(session_id: str, session: Session, settings: Settings
 
 
 def asyncio_run_collect_snapshots(product_id: str, *, limit: int, timeout_seconds: float) -> list[MarketSnapshot]:
-    import asyncio
-    import threading
+    import httpx
+    from datetime import datetime, timezone
 
-    result = []
-    def _thread_worker():
-        try:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            data = loop.run_until_complete(
-                collect_kraken_futures_snapshots(
-                    product_id,
-                    limit=limit,
-                    timeout_seconds=timeout_seconds,
+    try:
+        # Appeler directement l'API en mode synchrone
+        url = f"https://futures.kraken.com/api/charts/v1/trade/{product_id}/1m"
+        with httpx.Client(timeout=timeout_seconds) as client:
+            response = client.get(url, params={"limit": limit})
+            response.raise_for_status()
+            data = response.json()
+            
+            snapshots = []
+            for row in data.get("candles", []):
+                # row structure: time, open, high, low, close, volume
+                ts = datetime.fromtimestamp(row["time"] / 1000, tz=timezone.utc)
+                price = float(row["close"])
+                volume = float(row["volume"])
+                snapshots.append(
+                    MarketSnapshot(
+                        timestamp=ts,
+                        bid=price,
+                        ask=price + (price * 0.0001), # Approximation du spread
+                        bid_size=volume / 2,
+                        ask_size=volume / 2,
+                        volume_ratio=1.0,
+                        book_imbalance=0.0
+                    )
                 )
-            )
-            if data:
-                result.extend(data)
-        except Exception as e:
-            print(f"DEBUG: Error in asyncio thread for {product_id}: {e}")
-        finally:
-            try:
-                loop.close()
-            except:
-                pass
-
-    t = threading.Thread(target=_thread_worker)
-    t.start()
-    t.join(timeout=timeout_seconds + 2)
-    return result
+            return snapshots
+    except Exception as e:
+        print(f"DEBUG: Synchronous fetch error for {product_id}: {e}")
+        return []
 
 def confirm_trade(trade_id: str, session: Session, settings: Settings) -> ConfirmResult:
     if is_trading_paused(session):
