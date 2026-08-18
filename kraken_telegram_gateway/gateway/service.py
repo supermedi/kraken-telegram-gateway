@@ -620,8 +620,7 @@ def asyncio_run_collect_snapshots(product_id: str, *, limit: int, timeout_second
                         ask=price + (price * 0.0001), # Approximation du spread
                         bid_size=volume / 2,
                         ask_size=volume / 2,
-                        volume_ratio=1.0,
-                        book_imbalance=0.0
+                        volume_ratio=1.0
                     )
                 )
             return snapshots
