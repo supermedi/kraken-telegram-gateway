@@ -4,6 +4,13 @@ from contextlib import asynccontextmanager
 from contextlib import suppress
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 from pydantic import BaseModel
 from sqlmodel import Session
 
@@ -60,17 +67,16 @@ from kraken_telegram_gateway.gateway.telegram import (
     send_telegram_message,
 )
 
-
-logger = logging.getLogger(__name__)
-
-
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     init_db()
     settings = get_settings()
     scalp_scheduler_task = None
     if settings.scalp_kraken_scheduler_enabled:
+        logger.info("Scalp Kraken scheduler is enabled, starting background task...")
         scalp_scheduler_task = asyncio.create_task(run_scalp_kraken_scheduler_loop(settings))
+    else:
+        logger.info("Scalp Kraken scheduler is disabled.")
     try:
         yield
     finally:
@@ -83,12 +89,12 @@ async def lifespan(_: FastAPI):
 async def run_scalp_kraken_scheduler_loop(settings: Settings, *, max_ticks: int | None = None) -> None:
     ticks = 0
     while max_ticks is None or ticks < max_ticks:
-        await asyncio.sleep(settings.scalp_kraken_scheduler_interval_seconds)
         try:
             await asyncio.to_thread(_run_scalp_kraken_scheduler_once, settings)
         except Exception:
             logger.exception("Scalp Kraken scheduler tick failed.")
         ticks += 1
+        await asyncio.sleep(settings.scalp_kraken_scheduler_interval_seconds)
 
 
 def _run_scalp_kraken_scheduler_once(settings: Settings) -> ScalpSchedulerResult:
