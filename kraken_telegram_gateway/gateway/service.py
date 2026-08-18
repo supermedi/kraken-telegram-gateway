@@ -609,15 +609,28 @@ def sync_scalp_entry_fills(session_id: str, session: Session, settings: Settings
 def asyncio_run_collect_snapshots(product_id: str, *, limit: int, timeout_seconds: float) -> list[MarketSnapshot]:
     import asyncio
 
-    try:
-        return asyncio.run(
-            collect_kraken_futures_snapshots(
+    async def _safe_collect():
+        try:
+            return await collect_kraken_futures_snapshots(
                 product_id,
                 limit=limit,
                 timeout_seconds=timeout_seconds,
             )
-        )
-    except Exception:
+        except Exception as e:
+            print(f"DEBUG: Error collecting snapshots for {product_id}: {e}")
+            return []
+
+    # Vérification si une boucle existe déjà (cas typique d'un service tournant déjà en async)
+    try:
+        loop = asyncio.get_running_loop()
+        # Si une boucle tourne, on ne peut pas utiliser run(), il faut planifier la tâche
+        # Comme nous sommes dans une fonction synchrone, nous créons une future ou un bridge
+        return asyncio.run_coroutine_threadsafe(_safe_collect(), loop).result(timeout=timeout_seconds)
+    except RuntimeError:
+        # Aucune boucle ne tourne, nous pouvons utiliser run() en toute sécurité
+        return asyncio.run(_safe_collect())
+    except Exception as e:
+        print(f"DEBUG: Fatal error in asyncio_run_collect_snapshots: {e}")
         return []
 
 
