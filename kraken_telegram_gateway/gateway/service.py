@@ -8,6 +8,7 @@ from sqlmodel import Session, select
 from kraken_telegram_gateway.gateway.config import Settings
 from kraken_telegram_gateway.gateway.kraken import AccountBalance, KrakenClient, KrakenFill
 from kraken_telegram_gateway.gateway.market_data import collect_kraken_futures_snapshots
+from kraken_telegram_gateway.gateway.trend import get_market_trend
 from kraken_telegram_gateway.gateway.models import (
     AuditEvent,
     BotState,
@@ -221,7 +222,12 @@ def run_scalp_paper_snapshots(
                     break
             continue
 
-        decision = evaluate_scalp_signal(snapshot, side_mode=scalp_session.side_mode)
+        decision = evaluate_scalp_signal(
+            snapshot, 
+            side_mode=scalp_session.side_mode,
+            trend_1h=None,
+            trend_30m=None
+        )
         signal = ScalpSignal(
             session_id=scalp_session.id,
             signal_kind="book_volume_v1",
@@ -304,8 +310,24 @@ def run_scalp_live_snapshots(
     snapshots: list[MarketSnapshot],
     session: Session,
     settings: Settings,
+    trend_1h: str | None = None,
+    trend_30m: str | None = None,
 ) -> ScalpSessionResult:
-    # ... (preliminary checks)
+    scalp_session = session.get(ScalpSession, session_id)
+    if scalp_session is None:
+        return ScalpSessionResult(session_id=session_id, status="not_found", message="Session scalp introuvable.")
+    if scalp_session.status != ScalpSessionStatus.LIVE_ACTIVE:
+        return ScalpSessionResult(
+            session_id=scalp_session.id,
+            status=scalp_session.status,
+            message="Session scalp inactive; aucun snapshot traite.",
+        )
+    if not snapshots:
+        return ScalpSessionResult(
+            session_id=scalp_session.id,
+            status=scalp_session.status,
+            message="Aucun snapshot market-data a traiter.",
+        )
 
     client = KrakenClient(settings)
     
@@ -333,7 +355,66 @@ def run_scalp_live_snapshots(
             trend_1h=trend_1h,
             trend_30m=trend_30m
         )
-        # ... (le reste de la boucle d'entree)
+        
+        # ... (le reste de la boucle d'entree inchangé)
+        if decision.side is None:
+            continue
+
+        entry_price = snapshot.ask if decision.side == "buy" else snapshot.bid
+        result = client.submit_scalp_entry_order(scalp_session, decision.side, entry_price)
+        
+        if result["mode"] == "live":
+            scalp_trade = ScalpTrade(
+                session_id=scalp_session.id,
+                pair=scalp_session.pair,
+                side=decision.side,
+                amount_usdc=scalp_session.amount_usdc,
+                leverage=scalp_session.leverage,
+                entry_price=entry_price,
+                status=ScalpTradeStatus.LIVE_SUBMITTED,
+                external_order_id=result["external_order_id"],
+                opened_at=snapshot.timestamp,
+                created_at=snapshot.timestamp,
+                updated_at=snapshot.timestamp,
+            )
+            session.add(scalp_trade)
+            session.flush()
+            session.add(
+                AuditEvent(
+                    event_type="scalp_live_entry_submitted",
+                    message=f"Scalp live trade opened: {result['message']}",
+                )
+            )
+            submitted += 1
+        else:
+            blocked += 1
+            session.add(
+                AuditEvent(
+                    event_type="scalp_live_entry_blocked",
+                    message=f"Scalp live entry blocked: {result['message']}",
+                )
+            )
+            
+        signal = ScalpSignal(
+            session_id=scalp_session.id,
+            signal_kind="book_volume_v1",
+            score=decision.score,
+            spread=snapshot.spread,
+            book_imbalance=snapshot.book_imbalance,
+            volume_ratio=snapshot.volume_ratio,
+            reason=decision.reason,
+            created_at=snapshot.timestamp,
+        )
+        session.add(signal)
+
+    scalp_session.updated_at = utc_now()
+    session.add(scalp_session)
+    session.commit()
+    return ScalpSessionResult(
+        session_id=scalp_session.id,
+        status=scalp_session.status,
+        message=f"Live runner: {submitted} ordre(s) soumis, {blocked} bloque(s).",
+    )
 
 
 ScalpSnapshotProvider = Callable[[ScalpSession], list[MarketSnapshot]]

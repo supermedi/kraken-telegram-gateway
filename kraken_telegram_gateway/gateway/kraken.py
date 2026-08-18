@@ -7,12 +7,13 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_DOWN
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlencode
 
 import httpx
 
 from kraken_telegram_gateway.gateway.config import Settings
-from kraken_telegram_gateway.gateway.models import ScalpSession, Trade, TradeOrder
+from kraken_telegram_gateway.gateway.models import ScalpSession, Trade, TradeOrder, ScalpTrade
 
 
 class KrakenLiveTradingDisabledError(RuntimeError):
@@ -264,7 +265,7 @@ class KrakenClient:
                 symbol=scalp_session.pair,
                 side=exit_side,
                 price=price,
-                amount_usdc=scalp_session.amount_usdc, # Ou ajuster selon le remplissage réel
+                amount_usdc=scalp_session.amount_usdc,
                 leverage=scalp_session.leverage,
                 reduce_only=True,
                 instrument=self.instrument_provider.get(scalp_session.pair),
@@ -286,23 +287,38 @@ class KrakenClient:
             "message": f"Live Kraken scalp exit order submitted at {price}.",
         }
 
-    def cancel_order(self, external_order_id: str) -> dict[str, str]:
+    def submit_scalp_entry_order(self, scalp_session: ScalpSession, side: str, price: float) -> dict[str, str]:
         if not self.settings.can_live_trade:
             return {
-                "mode": "dry_run",
-                "message": "Dry-run: no Kraken order cancellation was submitted.",
+                "mode": "blocked",
+                "message": "Live scalp entry blocked: Kraken live gates are not open.",
             }
-
+        
         try:
-            self.cancel_live_order(external_order_id)
-        except KrakenOrderCancellationError as exc:
+            payload = self._build_limit_order_payload(
+                symbol=scalp_session.pair,
+                side=side,
+                price=price,
+                amount_usdc=scalp_session.amount_usdc,
+                leverage=scalp_session.leverage,
+                reduce_only=False,
+                instrument=self.instrument_provider.get(scalp_session.pair),
+            )
+            external_order_id = self.submit_live_order(payload)
+        except KrakenOrderPayloadError as exc:
             return {
                 "mode": "blocked",
-                "message": f"Live Kraken cancellation failed: {exc}",
+                "message": f"Live Kraken scalp entry submission blocked: {exc}",
+            }
+        except KrakenOrderSubmissionError as exc:
+            return {
+                "mode": "blocked",
+                "message": f"Live Kraken scalp entry submission failed: {exc}",
             }
         return {
             "mode": "live",
-            "message": "Live Kraken order cancelled.",
+            "external_order_id": external_order_id,
+            "message": f"Live Kraken scalp entry order submitted at {price}.",
         }
 
     def submit_live_order(self, payload: Mapping[str, str | int | float | bool | None]) -> str:
@@ -328,8 +344,27 @@ class KrakenClient:
             raise KrakenOrderSubmissionError(str(response_payload.get("error") or response_payload))
         return extract_placed_order_id(response_payload)
 
-    def cancel_live_order(self, external_order_id: str) -> None:
-        request = self.build_private_request("POST", self.CANCEL_ORDER_PATH, {"order_id": external_order_id})
+    def fetch_recent_fills(self) -> list[KrakenFill]:
+        request = self.build_fills_request()
+        try:
+            response = httpx.request(request.method, request.url, headers=request.headers, timeout=10)
+            response.raise_for_status()
+            payload = response.json()
+        except httpx.HTTPError as exc:
+            raise KrakenAccountEventError(f"Kraken fills request failed: {exc}") from exc
+        except ValueError as exc:
+            raise KrakenAccountEventError("Kraken fills response is not valid JSON.") from exc
+        
+        return parse_kraken_fills(payload)
+
+    def cancel_order(self, order_id: str) -> dict[str, str]:
+        if not self.settings.can_live_trade:
+            return {
+                "mode": "dry_run",
+                "message": "Dry-run: no Kraken order was cancelled.",
+            }
+        
+        request = self.build_private_request("POST", self.CANCEL_ORDER_PATH, {"order_id": order_id})
         try:
             response = httpx.request(
                 request.method,
@@ -339,17 +374,46 @@ class KrakenClient:
                 timeout=10,
             )
             response.raise_for_status()
-            response_payload = response.json()
+            payload = response.json()
         except httpx.HTTPError as exc:
             raise KrakenOrderCancellationError(f"request failed: {exc}") from exc
-        except ValueError as exc:
-            raise KrakenOrderCancellationError("response is not valid JSON") from exc
-
-        if not isinstance(response_payload, Mapping):
-            raise KrakenOrderCancellationError("response payload is not an object")
-        if str(response_payload.get("result", "success")).lower() != "success":
-            raise KrakenOrderCancellationError(str(response_payload.get("error") or response_payload))
-        validate_cancel_status(response_payload)
+        
+        if str(payload.get("result", "success")).lower() != "success":
+            raise KrakenOrderCancellationError(str(payload.get("error") or payload))
+            
+        validate_cancel_status(payload)
+        return {
+            "mode": "live",
+            "message": "Live Kraken order cancelled.",
+        }
+        if not self.settings.can_live_trade:
+            return {
+                "mode": "dry_run",
+                "message": "Dry-run: no Kraken order was cancelled.",
+            }
+        
+        request = self.build_private_request("POST", self.CANCEL_ORDER_PATH, {"orderId": order_id})
+        try:
+            response = httpx.request(
+                request.method,
+                request.url,
+                headers=request.headers,
+                content=request.post_data,
+                timeout=10,
+            )
+            response.raise_for_status()
+            payload = response.json()
+        except httpx.HTTPError as exc:
+            raise KrakenOrderCancellationError(f"request failed: {exc}") from exc
+        
+        if str(payload.get("result", "success")).lower() != "success":
+            raise KrakenOrderCancellationError(str(payload.get("error") or payload))
+            
+        validate_cancel_status(payload)
+        return {
+            "mode": "live",
+            "message": "Live Kraken order cancelled.",
+        }
 
     def fetch_account_balances(self) -> list[AccountBalance]:
         request = self.build_account_request()
