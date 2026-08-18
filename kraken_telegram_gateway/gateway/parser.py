@@ -98,7 +98,7 @@ def parse_scalp_start_command(text: str) -> ScalpIntent:
         duration_seconds=int(values.get("duration_seconds", "3600")),
         max_hold_seconds=int(values.get("max_hold_seconds", "300")),
         max_losses=int(values.get("max_losses", "3")),
-        min_net_pnl=float(values.get("min_net_pnl", "5")),
+        min_net_pnl=float(values.get("min_net_pnl", "10.0")),
         mode=values.get("mode", "paper"),
     )
 

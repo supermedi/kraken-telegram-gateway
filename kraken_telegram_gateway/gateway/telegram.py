@@ -179,10 +179,9 @@ def dispatch_telegram_text(text: str, session: Session, settings: Settings) -> s
                     return f"{result.message}\n{format_scalp_status(detail)}"
             return f"{result.message}\nStatut: {result.status}"
 
-        if command == "/scalp_stop":
-            session_id = _require_scalp_session_id(argument, "/scalp_stop")
-            result = stop_scalp_session(session_id, session)
-            return f"{result.message}\nSession ID: {result.session_id}\nStatut: {result.status}"
+        if command == "/scalp_audit":
+            session_id = _require_scalp_session_id(argument, "/scalp_audit")
+            return get_scalp_audit(session_id, session)
 
         if command == "/scalp_status":
             session_id = _require_scalp_session_id(argument, "/scalp_status")

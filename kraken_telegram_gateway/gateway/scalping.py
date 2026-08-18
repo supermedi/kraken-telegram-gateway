@@ -34,10 +34,14 @@ class ScalpSignalDecision:
     reason: str
 
 
+from kraken_telegram_gateway.gateway.trend import validate_signal_with_trend
+
 def evaluate_scalp_signal(
     snapshot: MarketSnapshot,
     *,
     side_mode: str,
+    trend_1h: str,
+    trend_30m: str,
     max_spread_bps: float = 20,
     min_imbalance: float = 0.25,
     min_volume_ratio: float = 1.2,
@@ -50,6 +54,12 @@ def evaluate_scalp_signal(
         return ScalpSignalDecision(None, score, f"spread too wide: {spread_bps:.1f}bps")
     if snapshot.volume_ratio < min_volume_ratio:
         return ScalpSignalDecision(None, score, f"volume too low: {snapshot.volume_ratio:.2f}x")
+    
+    # Nouveau filtre de tendance
+    requested_side = "buy" if imbalance > 0 else "sell"
+    if not validate_signal_with_trend(trend_1h, trend_30m, requested_side):
+        return ScalpSignalDecision(None, score, f"trend filter rejected: {trend_1h}/{trend_30m}")
+
     if imbalance >= min_imbalance and side_mode in {"buy", "both"}:
         return ScalpSignalDecision("buy", score, f"buy imbalance {imbalance:.2f}, volume {snapshot.volume_ratio:.2f}x")
     if imbalance <= -min_imbalance and side_mode in {"sell", "both"}:

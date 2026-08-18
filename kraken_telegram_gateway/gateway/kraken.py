@@ -249,38 +249,41 @@ class KrakenClient:
             "message": "Live Kraken target order submitted.",
         }
 
-    def submit_scalp_entry_order(self, scalp_session: ScalpSession, side: str, price: float) -> dict[str, str]:
+    def submit_scalp_exit_order(self, scalp_session: ScalpSession, trade: ScalpTrade, price: float) -> dict[str, str]:
         if not self.settings.can_live_trade:
             return {
                 "mode": "blocked",
-                "message": "Live scalp blocked: Kraken live gates are not open.",
+                "message": "Live scalp exit blocked: Kraken live gates are not open.",
             }
-
+        
+        # Le side d'exit est l'inverse du side d'entrée
+        exit_side = "sell" if trade.side == "buy" else "buy"
+        
         try:
             payload = self._build_limit_order_payload(
                 symbol=scalp_session.pair,
-                side=side,
+                side=exit_side,
                 price=price,
-                amount_usdc=scalp_session.amount_usdc,
+                amount_usdc=scalp_session.amount_usdc, # Ou ajuster selon le remplissage réel
                 leverage=scalp_session.leverage,
-                reduce_only=False,
+                reduce_only=True,
                 instrument=self.instrument_provider.get(scalp_session.pair),
             )
             external_order_id = self.submit_live_order(payload)
         except KrakenOrderPayloadError as exc:
             return {
                 "mode": "blocked",
-                "message": f"Live Kraken scalp submission blocked: {exc}",
+                "message": f"Live Kraken scalp exit submission blocked: {exc}",
             }
         except KrakenOrderSubmissionError as exc:
             return {
                 "mode": "blocked",
-                "message": f"Live Kraken scalp submission failed: {exc}",
+                "message": f"Live Kraken scalp exit submission failed: {exc}",
             }
         return {
             "mode": "live",
             "external_order_id": external_order_id,
-            "message": "Live Kraken scalp entry order submitted.",
+            "message": f"Live Kraken scalp exit order submitted at {price}.",
         }
 
     def cancel_order(self, external_order_id: str) -> dict[str, str]:
@@ -384,22 +387,22 @@ class KrakenClient:
             )
         return parse_account_balances(payload)
 
-    def fetch_recent_fills(self) -> list[KrakenFill]:
-        request = self.build_fills_request()
+    def fetch_ohlcv(self, symbol: str, interval: str, count: int = 100) -> list[dict[str, Any]]:
+        url = f"{self.settings.kraken_futures_base_url.rstrip('/')}{self.API_PREFIX}/api/v3/ohlc"
+        params = {"symbol": symbol, "interval": interval, "count": count}
         try:
-            response = httpx.request(request.method, request.url, headers=request.headers, timeout=10)
+            response = httpx.get(url, params=params, timeout=10)
             response.raise_for_status()
             payload = response.json()
         except httpx.HTTPError as exc:
-            raise KrakenAccountEventError(f"Kraken fills request failed: {exc}") from exc
+            raise KrakenAccountError(f"Kraken OHLCV request failed: {exc}") from exc
         except ValueError as exc:
-            raise KrakenAccountEventError("Kraken fills response is not valid JSON.") from exc
+            raise KrakenAccountError("Kraken OHLCV response is not valid JSON.") from exc
 
-        if not isinstance(payload, Mapping):
-            raise KrakenAccountEventError("Kraken fills response has an unexpected shape.")
         if str(payload.get("result", "success")).lower() != "success":
-            raise KrakenAccountEventError(f"Kraken fills request was not successful: {payload.get('error') or payload}")
-        return parse_kraken_fills(payload)
+            raise KrakenAccountError(f"Kraken OHLCV request failed: {payload.get('error')}")
+
+        return payload.get("candles", [])
 
     def build_account_request(self, *, include_nonce: bool = True) -> KrakenAuthenticatedRequest:
         return self.build_private_request(
