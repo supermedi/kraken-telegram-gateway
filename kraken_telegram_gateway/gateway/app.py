@@ -93,12 +93,14 @@ async def run_scalp_kraken_scheduler_loop(settings: Settings, *, max_ticks: int 
 
 def _run_scalp_kraken_scheduler_once(settings: Settings) -> ScalpSchedulerResult:
     with Session(engine) as session:
-        return run_active_scalp_paper_sessions_from_kraken(
+        result = run_active_scalp_paper_sessions_from_kraken(
             session,
             snapshots_per_session=settings.scalp_kraken_scheduler_snapshots_per_session,
             timeout_seconds=settings.scalp_kraken_scheduler_timeout_seconds,
             settings=settings,
         )
+        logger.info(f"Scalp Kraken scheduler tick executed: scanned={result.scanned}, processed={result.processed}, skipped={result.skipped}")
+        return result
 
 
 app = FastAPI(title="Kraken Telegram Gateway", version="0.1.0", lifespan=lifespan)
