@@ -26,6 +26,7 @@ from kraken_telegram_gateway.gateway.service import (
     format_trade_status,
     get_account_balances,
     get_scalp_session_detail,
+    get_scalp_audit,
     get_trade_detail,
     is_trading_paused,
     list_audit_events,
