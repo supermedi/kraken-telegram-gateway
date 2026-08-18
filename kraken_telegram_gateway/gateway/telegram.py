@@ -12,6 +12,7 @@ from kraken_telegram_gateway.gateway.kraken import KrakenAccountError, KrakenAcc
 from kraken_telegram_gateway.gateway.models import OrderRole, OrderStatus, ProcessedTelegramUpdate, TradeOrder, TradeStatus
 from kraken_telegram_gateway.gateway.parser import CommandParseError
 from kraken_telegram_gateway.gateway.risk import RiskValidationError
+# Force update for pipeline
 from kraken_telegram_gateway.gateway.service import (
     cancel_trade,
     confirm_trade,
