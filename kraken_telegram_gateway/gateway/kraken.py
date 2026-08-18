@@ -452,10 +452,9 @@ class KrakenClient:
         return parse_account_balances(payload)
 
     def fetch_ohlcv(self, symbol: str, interval: str, count: int = 100) -> list[dict[str, Any]]:
-        url = f"{self.settings.kraken_futures_base_url.rstrip('/')}{self.API_PREFIX}/api/v3/ohlc"
-        params = {"symbol": symbol, "interval": interval, "count": count}
+        url = f"{self.settings.kraken_futures_base_url.rstrip('/')}/api/charts/v1/trade/{symbol}/{interval}"
         try:
-            response = httpx.get(url, params=params, timeout=10)
+            response = httpx.get(url, timeout=10)
             response.raise_for_status()
             payload = response.json()
         except httpx.HTTPError as exc:
@@ -463,10 +462,7 @@ class KrakenClient:
         except ValueError as exc:
             raise KrakenAccountError("Kraken OHLCV response is not valid JSON.") from exc
 
-        if str(payload.get("result", "success")).lower() != "success":
-            raise KrakenAccountError(f"Kraken OHLCV request failed: {payload.get('error')}")
-
-        return payload.get("candles", [])
+        return payload if isinstance(payload, list) else payload.get("candles", [])
 
     def build_account_request(self, *, include_nonce: bool = True) -> KrakenAuthenticatedRequest:
         return self.build_private_request(
